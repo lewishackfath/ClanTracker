@@ -705,7 +705,8 @@ async function loadPlayer(rsn, period) {
     if (needsRefresh && !xpRefreshAttempted.has(key)) {
       xpRefreshAttempted.add(key);
 
-      const refreshUrl = `${API.refreshPlayerXp}?player=${encodeURIComponent(rsn)}`;
+      const rsnForRefresh = String(rsn || "").trim().replace(/\s+/g, "_");
+      const refreshUrl = `${API.refreshPlayerXp}?player=${encodeURIComponent(rsnForRefresh)}`;
       const refresh = await fetchJson(refreshUrl);
 
       if (refresh && refresh.ok && refresh.refreshed) {
