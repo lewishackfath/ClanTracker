@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>24K Tracker</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">24K</div>
+        <div>
+          <div class="title">Tracker</div>
+          <div class="subtitle">Clan & member lookup</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container main">
+    <!-- Landing -->
+    <section class="card" id="landingCard">
+      <h1 class="h1">Welcome</h1>
+      <p class="muted">
+        View clan stats or a single player’s cap/activity using a clan key or RSN.
+      </p>
+
+      <div class="grid">
+        <div class="panel">
+          <h2 class="h2">View a clan</h2>
+          <label class="label" for="clanKey">Clan key</label>
+
+          <div class="typeahead">
+            <input id="clanKey" class="input" type="text" autocomplete="off"
+                   placeholder="Type to search clans…" aria-expanded="false" aria-controls="clanList" />
+            <div id="clanList" class="dropdown hidden" role="listbox" aria-label="Clan results"></div>
+          </div>
+
+          <button id="btnClan" class="button" type="button">Open clan</button>
+          <p class="help">Opens: <code>/?clan=YOURKEY</code></p>
+        </div>
+
+        <div class="panel">
+          <h2 class="h2">View a player</h2>
+          <label class="label" for="playerRsn">RSN</label>
+
+          <div class="typeahead">
+            <input id="playerRsn" class="input" type="text" autocomplete="off"
+                   placeholder="Type to search players…" aria-expanded="false" aria-controls="playerList" />
+            <div id="playerList" class="dropdown hidden" role="listbox" aria-label="Player results"></div>
+          </div>
+
+          <button id="btnPlayer" class="button" type="button">Open player</button>
+          <p class="help">Opens: <code>/?player=RSN</code></p>
+        </div>
+      </div>
+
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+    </section>
+
+    <!-- Clan view -->
+    <section class="card hidden" id="viewClan">
+      <div class="row">
+        <div>
+          <h2 class="h2">Clan overview</h2>
+          <p class="muted" id="clanSubheading"></p>
+        </div>
+        <button class="button secondary" type="button" id="backFromClan">Back</button>
+      </div>
+
+      <div class="statsGrid" id="clanStats">
+        <div class="statCard">
+          <div class="statLabel">Active members</div>
+          <div class="statValue" id="statActive">—</div>
+        </div>
+        <div class="statCard">
+          <div class="statLabel">Capped</div>
+          <div class="statValue" id="statCapped">—</div>
+        </div>
+        <div class="statCard">
+          <div class="statLabel">Uncapped</div>
+          <div class="statValue" id="statUncapped">—</div>
+        </div>
+        <div class="statCard">
+          <div class="statLabel">% capped</div>
+          <div class="statValue" id="statPercent">—</div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:14px;">
+        <div class="row" style="align-items:center;">
+          <h3 class="h2" style="margin:0;">Top XP earners by skill</h3>
+          <div style="min-width:220px;">
+            <select id="clanXpPeriod" class="select"></select>
+          </div>
+        </div>
+        <div class="muted" id="clanXpMeta" style="margin-top:6px;"></div>
+        <div class="skillsLeadersGrid" id="clanSkillLeaders"></div>
+      </div>
+
+      <div class="toolbar">
+        <input id="memberSearch" class="input" type="text" autocomplete="off" placeholder="Search members…" />
+        <div class="segmented">
+          <button class="segBtn active" data-filter="all" type="button">All</button>
+          <button class="segBtn" data-filter="capped" type="button">Capped</button>
+          <button class="segBtn" data-filter="uncapped" type="button">Uncapped</button>
+        </div>
+      </div>
+
+      <div class="muted" id="clanStatus" style="margin-top:10px;"></div>
+      <div class="memberList" id="memberList"></div>
+
+      <div class="lastPull muted" id="clanLastPull"></div>
+    </section>
+
+    <!-- Player view -->
+    <section class="card hidden" id="viewPlayer">
+      <div class="row">
+        <div>
+          <h2 class="h2">Player</h2>
+          <p class="muted" id="playerSubheading"></p>
+        </div>
+        <button class="button secondary" type="button" id="backFromPlayer">Back</button>
+      </div>
+
+      <div class="playerHeader">
+        <div class="playerName" id="playerName">—</div>
+        <div class="playerMeta" id="playerMeta">—</div>
+      </div>
+
+      <div class="statsGrid">
+        <div class="statCard">
+          <div class="statLabel">Cap (this week)</div>
+          <div class="statValue" id="pCap">—</div>
+        </div>
+        <div class="statCard">
+          <div class="statLabel">Citadel visit (this week)</div>
+          <div class="statValue" id="pVisit">—</div>
+        </div>
+        <div class="statCard">
+          <div class="statLabel">XP gained</div>
+          <div class="statValue" id="pXpGained">—</div>
+        </div>
+        <div class="statCard">
+          <div class="statLabel">XP period</div>
+          <div class="statValue">
+            <select id="xpPeriod" class="select"></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="twoCol">
+        <div class="panel">
+          <h3 class="h2" style="margin-bottom:8px;">Current skills</h3>
+          <div class="skillsGrid" id="skillsGrid"></div>
+        </div>
+
+        <div class="panel">
+          <h3 class="h2" style="margin-bottom:8px;">Top XP skills</h3>
+          <div class="skillList" id="skillList"></div>
+        </div>
+
+        <div class="panel" style="grid-column: 1 / -1;">
+          <h3 class="h2" style="margin-bottom:8px;">Recent activity</h3>
+          <div class="muted" id="activityStatus"></div>
+          <div class="activityList" id="activityList"></div>
+        </div>
+      </div>
+
+      <div class="muted" id="playerError" style="margin-top:10px;"></div>
+      <div class="lastPull muted" id="playerLastPull"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container muted">tracker.24krs.com.au</div>
+  </footer>
+
+    <script src="./config/skills.js?v=20260120220643"></script>
+  <script src="./app.js?v=20260120220643"></script>
+</body>
+</html>
