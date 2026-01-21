@@ -208,8 +208,23 @@ code {
 
 /* Player view */
 .playerHeader { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 16px; background: rgba(255,255,255,0.03); }
+.playerNameRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .playerName { font-weight: 900; font-size: 1.3rem; }
 .playerMeta { color: var(--muted); margin-top: 4px; }
+
+.playerAvatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+  object-fit: cover;
+  flex: 0 0 auto;
+}
 
 .twoCol { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 14px; }
 @media (min-width: 860px) { .twoCol { grid-template-columns: 1fr 1fr; } }

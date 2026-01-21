@@ -168,6 +168,34 @@ function renderLastPull(el, lastPull) {
   el.textContent = `Last data pull: ${local} • ${utc}`;
 }
 
+/* ---------------- Player avatar (cached server-side) ---------------- */
+
+function setPlayerAvatar(rsn) {
+  const img = qs("playerAvatar");
+  if (!img) return;
+
+  const name = String(rsn || "").trim();
+  if (!name) {
+    img.classList.add("hidden");
+    img.removeAttribute("src");
+    img.alt = "";
+    return;
+  }
+
+  const url = `api/avatar.php?player=${encodeURIComponent(name)}`;
+  img.alt = `${name} avatar`;
+
+  img.onload = () => {
+    img.classList.remove("hidden");
+  };
+
+  img.onerror = () => {
+    img.classList.add("hidden");
+  };
+
+  img.src = url;
+}
+
 /* ---------------- Activity icon logic ---------------- */
 
 const SKILLS = [
@@ -521,6 +549,7 @@ function renderPlayer() {
   const week = playerData.week;
 
   qs("playerName").textContent = m?.rsn || "—";
+  setPlayerAvatar(m?.rsn || "");
   qs("playerSubheading").textContent =
     `${c?.name || c?.key || "Clan"} • Week: ${week?.week_start_local || ""} → ${week?.week_end_local || ""} (${week?.timezone || "UTC"})`;
 
@@ -620,6 +649,7 @@ async function loadPlayer(rsn, period) {
 
   qs("playerSubheading").textContent = "Loading…";
   qs("playerName").textContent = "—";
+  setPlayerAvatar("");
   qs("playerMeta").textContent = "—";
   qs("playerError").textContent = "";
   qs("playerLastPull").textContent = "";
