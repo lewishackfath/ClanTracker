@@ -198,18 +198,35 @@ $stmt = $pdo->prepare("
 SELECT
   m.rsn,
   m.rank_name,
-  (mc.id IS NOT NULL) AS capped
+  (mc.id IS NOT NULL) AS capped,
+  (mv.id IS NOT NULL) AS visited
 FROM members m
 LEFT JOIN member_caps mc
   ON mc.clan_key = m.clan_key
  AND mc.rsn_normalised = m.rsn_normalised
  AND mc.cap_week_start_utc = :ws
+LEFT JOIN member_citadel_visits mv
+  ON mv.clan_key = m.clan_key
+ AND mv.rsn_normalised = m.rsn_normalised
+ AND mv.visit_week_start_utc = :ws
 WHERE m.clan_key = :ck
   AND m.is_active = 1
 ORDER BY m.rsn ASC
 ");
+
 $stmt->execute([':ck' => $clanKey, ':ws' => $ws]);
+
 $members = $stmt->fetchAll();
+
+// Rank list for UI filters
+$ranksSet = [];
+foreach ($members as $m) {
+    $rn = $m['rank_name'] ?? '';
+    if ($rn !== null && $rn !== '') $ranksSet[(string)$rn] = true;
+}
+$ranks = array_keys($ranksSet);
+sort($ranks, SORT_NATURAL | SORT_FLAG_CASE);
+
 
 $active = count($members);
 $capped = 0;
@@ -354,8 +371,10 @@ tracker_json([
             'rsn' => $m['rsn'],
             'rank_name' => $m['rank_name'],
             'capped' => ((int)$m['capped'] === 1),
+            'visited' => ((int)($m['visited'] ?? 0) === 1),
         ];
     }, $members),
+    'ranks' => $ranks,
     'xp' => [
         'period' => $xpWindow['period'],
         'start_utc' => $xpWindow['start_utc'],

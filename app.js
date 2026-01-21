@@ -1,5 +1,3 @@
-// Tracker app version: 20260120142030
-window.__TRACKER_APP_VERSION = '20260120142030';
 function qs(id) { return document.getElementById(id); }
 
 const API = {
@@ -8,16 +6,6 @@ const API = {
   clanOverview: "api/clan.php",
   player: "api/player.php",
 };
-
-/* ---- Virtual level config sanity (auto) ---- */
-(function() {
-  const has = !!window.TrackerSkills;
-  console.log("[Tracker] app", window.__TRACKER_APP_VERSION, "skillsLoaded", has, "skillsVer", window.TrackerSkillsVersion || null);
-  if (!has) {
-    console.warn("[Tracker] TrackerSkills missing: ensure ./config/skills.js loads before app.js");
-  }
-})();
-
 
 function getParams() {
   const p = new URLSearchParams(window.location.search);
@@ -222,6 +210,7 @@ function classifyActivity(text, details) {
 /* ---------------- Clan overview state ---------------- */
 let clanData = null;
 let clanFilter = "all";
+let clanRankFilter = "all";
 let selectedClanXpPeriod = "7d";
 
 function populateClanXpPeriods(periods, currentValue) {
@@ -294,16 +283,42 @@ function setFilter(newFilter) {
   renderMemberList();
 }
 
+function populateRankFilter(ranks, members) {
+  const sel = qs("rankFilter");
+  if (!sel) return;
+
+  const set = new Set();
+  (ranks || []).forEach(r => { if (r) set.add(String(r)); });
+  (members || []).forEach(m => { if (m && m.rank_name) set.add(String(m.rank_name)); });
+
+  const list = Array.from(set).sort((a,b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+  const current = sel.value || "all";
+
+  sel.innerHTML = `<option value="all">All ranks</option>` + list.map(r => {
+    const esc = escapeHtml(r);
+    const selected = (r === current) ? " selected" : "";
+    return `<option value="${esc}"${selected}>${esc}</option>`;
+  }).join("");
+}
+
+
 function renderMemberList() {
   if (!clanData || !clanData.ok) return;
 
   const needle = normalise(qs("memberSearch").value).toLowerCase();
   const listEl = qs("memberList");
+  const rankSel = qs("rankFilter");
+  clanRankFilter = rankSel ? (rankSel.value || "all") : "all";
 
   let members = clanData.members || [];
 
-  if (clanFilter === "capped") members = members.filter(m => m.capped);
+  if (clanFilter === "capped") members = members.filter(m => !!m.capped);
   if (clanFilter === "uncapped") members = members.filter(m => !m.capped);
+  if (clanFilter === "visited_only") members = members.filter(m => !!m.visited && !m.capped);
+
+  if (clanRankFilter && clanRankFilter !== "all") {
+    members = members.filter(m => String(m.rank_name || "") === String(clanRankFilter));
+  }
 
   if (needle) {
     members = members.filter(m =>
@@ -315,7 +330,7 @@ function renderMemberList() {
   qs("clanStatus").textContent = `${members.length} shown`;
 
   listEl.innerHTML = members.map(m => {
-    const badge = m.capped ? "Capped" : "Uncapped";
+    const badge = m.capped ? "Capped" : (m.visited ? "Visited" : "Uncapped");
     const meta = m.rank_name ? escapeHtml(m.rank_name) : "—";
     return `
       <div class="memberCard clickable" data-rsn="${escapeHtml(m.rsn)}" title="Open player">
@@ -359,6 +374,8 @@ async function loadClanOverview(clanKey, period) {
 
   clanData = data;
 
+
+  populateRankFilter(data.ranks || [], data.members || []);
   const clanName = data.clan?.name || clanKey;
   const tz = data.week?.timezone || "UTC";
   const ws = data.week?.week_start_local || "";
@@ -402,34 +419,33 @@ function renderCurrentSkills() {
   }
 
   const skills = cs.skills || [];
+
   gridEl.innerHTML = skills.map(s => {
     const name = s.skill || "—";
     const key = s.skill_key || name;
-    const level = Number(s.level ?? 0);
+
+    const reportedLevel = Number(s.level ?? 0);
     const xp = Number(s.xp ?? 0);
 
-    const dl = (window.TrackerSkills && typeof window.TrackerSkills.getDisplayLevel === 'function')
-      ? window.TrackerSkills.getDisplayLevel(name, level, xp)
-      : { displayLevel: level, virtualLevel: level, isVirtual: false };
+    const dl = (window.TrackerSkills && typeof window.TrackerSkills.getDisplayLevel === "function")
+      ? window.TrackerSkills.getDisplayLevel(name, reportedLevel, xp)
+      : { displayLevel: reportedLevel, virtualLevel: reportedLevel, isVirtual: false };
 
-    const vLevel = Number(dl.virtualLevel ?? level);
-    const maxV = (window.TrackerSkills && typeof window.TrackerSkills.maxVirtualLevelForSkill === 'function')
+    const displayLevel = Number(dl.displayLevel ?? reportedLevel);
+    const maxV = (window.TrackerSkills && typeof window.TrackerSkills.maxVirtualLevelForSkill === "function")
       ? window.TrackerSkills.maxVirtualLevelForSkill(name)
       : 120;
 
-    const displayLevel = Number(dl.displayLevel ?? Math.max(level, vLevel));
-    const isVirtualShown = !!dl.isVirtual;
-
-    const is200m = xp >= 200_000_000;
+    const is200m = xp >= 200000000;
     const isMaxVirtual = displayLevel >= maxV;
 
-    // Border tiers (your latest rules)
+    // Border tiers (per your latest rule)
     let tierClass = "";
     if (is200m) tierClass = "gold";
     else if (displayLevel >= 120) tierClass = "silver";
-    else if (displayLevel >= 99) tierClass = "bronze";
+    else if (reportedLevel >= 99) tierClass = "bronze";
 
-    // Badge precedence: 200m wins (show ONLY 200m badge)
+    // Badge precedence: 200m badge only
     let badgeHtml = "";
     if (is200m) {
       badgeHtml = `<img class="skillBadge" src="assets/badges/200m.png" alt="200m" />`;
@@ -445,7 +461,10 @@ function renderCurrentSkills() {
         </div>
         <div class="skillInfo">
           <div class="skillTitle">${escapeHtml(name)}</div>
-          <div class="skillLevel">Level ${escapeHtml(String(displayLevel || "—"))}${isVirtualShown ? ` <span class="pill">Virtual</span>` : ""}</div>
+          <div class="skillLevel">
+            Level ${escapeHtml(String(displayLevel || reportedLevel || "—"))}
+            ${dl.isVirtual ? `<span class="pill">Virtual</span>` : ``}
+          </div>
           <div class="skillXp">${formatNumber(xp)} XP</div>
         </div>
       </div>
