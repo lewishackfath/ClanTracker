@@ -406,3 +406,129 @@ code {
 
 .leaderSkill { font-weight: 900; }
 .leaderMeta { color: var(--muted); font-weight: 700; margin-left: auto; }
+
+/* ===============================
+   Global background image
+   =============================== */
+
+/* Background image layer */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+
+  background-image: url("assets/bg.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+
+  /* Visual treatment */
+  filter: blur(6px) brightness(0.45);
+  transform: scale(1.05); /* prevents blur edge clipping */
+
+  z-index: -2;
+}
+
+/* Dark overlay for readability */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: -1;
+}
+
+/* ===============================
+   Footer 3-column layout
+   =============================== */
+
+.footer {
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+  background: rgba(10, 14, 20, 0.5);
+}
+
+.footerGrid {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: 20px;
+  padding: 20px 0 28px;
+  align-items: start;
+}
+
+/* Shared column styling */
+.footerCol {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* Column 1 */
+.footerColLeft {
+  text-align: left;
+}
+.footerTitle {
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.footerLink {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+/* Column 2 */
+.footerColCenter {
+  text-align: center;
+}
+.footerDisclaimer {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.65);
+}
+
+/* Column 3 */
+.footerColRight {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.footerCreditTop {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.footerLogo {
+  max-width: 140px;
+  height: auto;
+  opacity: 0.85;
+}
+
+.footerCreditBottom {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* ===============================
+   Mobile layout
+   =============================== */
+
+@media (max-width: 860px) {
+  .footerGrid {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .footerColLeft,
+  .footerColCenter,
+  .footerColRight {
+    text-align: center;
+    align-items: center;
+  }
+
+  .footerColRight {
+    align-items: center;
+  }
+}
