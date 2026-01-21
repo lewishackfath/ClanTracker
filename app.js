@@ -196,6 +196,23 @@ function setPlayerAvatar(rsn) {
   img.src = url;
 }
 
+/* ---------------- Clan avatars (cached only) ---------------- */
+
+// Mirror api/avatar.php filename rules (spaces preserved, unsafe filesystem chars replaced)
+function avatarSafeFilename(rsn) {
+  let s = String(rsn || "").trim();
+  if (!s) return "unknown";
+  s = s.replace(/[\\\/\:\*\?\"\<\>\|]+/g, "_");
+  s = s.replace(/\s+/g, " ").trim();
+  return s || "unknown";
+}
+
+function getCachedAvatarUrl(rsn) {
+  const safe = avatarSafeFilename(rsn);
+  return `assets/avatars/${encodeURIComponent(safe)}.png`;
+}
+
+
 /* ---------------- Activity icon logic ---------------- */
 
 const SKILLS = [
@@ -357,7 +374,10 @@ function renderMemberList() {
     return `
       <div class="memberCard clickable" data-rsn="${escapeHtml(m.rsn)}" title="Open player">
         <div class="memberLeft">
-          <div class="memberName">${escapeHtml(m.rsn)}</div>
+          <div class="memberHeader">
+            <img class="memberAvatar" src="${getCachedAvatarUrl(m.rsn)}" alt="" onerror="this.remove()" />
+            <div class="memberName">${escapeHtml(m.rsn)}</div>
+          </div>
           <div class="memberMeta">${meta}</div>
         </div>
         <div class="badge">${badge}</div>

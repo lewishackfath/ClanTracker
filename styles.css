@@ -547,3 +547,24 @@ body::before {
     align-items: center;
   }
 }
+
+/* ===============================
+   Clan member avatars (cached only)
+   =============================== */
+
+.memberHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.memberAvatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06);
+  flex: 0 0 auto;
+}
+
