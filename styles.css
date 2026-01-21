@@ -214,6 +214,18 @@ code {
 .twoCol { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 14px; }
 @media (min-width: 860px) { .twoCol { grid-template-columns: 1fr 1fr; } }
 
+/* ✅ Player page only: 70/30 layout on desktop */
+@media (min-width: 860px) {
+  #viewPlayer .twoCol { grid-template-columns: 7fr 3fr; }
+}
+
+/* ✅ Player page only: reduce Top XP emphasis */
+#viewPlayer .skillRow .skillXp {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+
 .skillList, .activityList { margin-top: 10px; display: grid; grid-template-columns: 1fr; gap: 8px; }
 
 .skillRow, .activityRow {
