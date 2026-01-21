@@ -832,7 +832,8 @@ function wireUI() {
   qs("backFromClan").addEventListener("click", clearQuery);
   qs("backFromPlayer").addEventListener("click", clearQuery);
 
-  qs("memberSearch").addEventListener("input", debounce(renderMemberList, 120));
+    qs("rankFilter")?.addEventListener("change", renderMemberList);
+qs("memberSearch").addEventListener("input", debounce(renderMemberList, 120));
   document.querySelectorAll(".segBtn").forEach(btn => btn.addEventListener("click", () => setFilter(btn.dataset.filter)));
 
     const clanXpSel = qs("clanXpPeriod");
