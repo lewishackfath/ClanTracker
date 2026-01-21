@@ -5,7 +5,28 @@ const API = {
   players: "api/search/players.php",
   clanOverview: "api/clan.php",
   player: "api/player.php",
+  refreshPlayerXp: "api/refresh_player_xp.php",
 };
+
+/* ---------------- XP refresh helper ---------------- */
+
+function parseUtcToMs(utc) {
+  const s = String(utc || "").trim();
+  if (!s) return null;
+  // expects "YYYY-MM-DD HH:mm:ss" (UTC)
+  const iso = s.includes("T") ? s : s.replace(" ", "T");
+  const d = new Date(`${iso}Z`);
+  const ms = d.getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function utcAgeSeconds(utc) {
+  const ms = parseUtcToMs(utc);
+  if (ms === null) return null;
+  return Math.floor((Date.now() - ms) / 1000);
+}
+
+const xpRefreshAttempted = new Set();
 
 function getParams() {
   const p = new URLSearchParams(window.location.search);
@@ -210,7 +231,6 @@ function classifyActivity(text, details) {
 /* ---------------- Clan overview state ---------------- */
 let clanData = null;
 let clanFilter = "all";
-let clanRankFilter = "all";
 let selectedClanXpPeriod = "7d";
 
 function populateClanXpPeriods(periods, currentValue) {
@@ -283,42 +303,16 @@ function setFilter(newFilter) {
   renderMemberList();
 }
 
-function populateRankFilter(ranks, members) {
-  const sel = qs("rankFilter");
-  if (!sel) return;
-
-  const set = new Set();
-  (ranks || []).forEach(r => { if (r) set.add(String(r)); });
-  (members || []).forEach(m => { if (m && m.rank_name) set.add(String(m.rank_name)); });
-
-  const list = Array.from(set).sort((a,b) => a.localeCompare(b, "en", { sensitivity: "base" }));
-  const current = sel.value || "all";
-
-  sel.innerHTML = `<option value="all">All ranks</option>` + list.map(r => {
-    const esc = escapeHtml(r);
-    const selected = (r === current) ? " selected" : "";
-    return `<option value="${esc}"${selected}>${esc}</option>`;
-  }).join("");
-}
-
-
 function renderMemberList() {
   if (!clanData || !clanData.ok) return;
 
   const needle = normalise(qs("memberSearch").value).toLowerCase();
   const listEl = qs("memberList");
-  const rankSel = qs("rankFilter");
-  clanRankFilter = rankSel ? (rankSel.value || "all") : "all";
 
   let members = clanData.members || [];
 
-  if (clanFilter === "capped") members = members.filter(m => !!m.capped);
+  if (clanFilter === "capped") members = members.filter(m => m.capped);
   if (clanFilter === "uncapped") members = members.filter(m => !m.capped);
-  if (clanFilter === "visited_only") members = members.filter(m => !!m.visited && !m.capped);
-
-  if (clanRankFilter && clanRankFilter !== "all") {
-    members = members.filter(m => String(m.rank_name || "") === String(clanRankFilter));
-  }
 
   if (needle) {
     members = members.filter(m =>
@@ -330,7 +324,7 @@ function renderMemberList() {
   qs("clanStatus").textContent = `${members.length} shown`;
 
   listEl.innerHTML = members.map(m => {
-    const badge = m.capped ? "Capped" : (m.visited ? "Visited" : "Uncapped");
+    const badge = m.capped ? "Capped" : "Uncapped";
     const meta = m.rank_name ? escapeHtml(m.rank_name) : "—";
     return `
       <div class="memberCard clickable" data-rsn="${escapeHtml(m.rsn)}" title="Open player">
@@ -374,8 +368,6 @@ async function loadClanOverview(clanKey, period) {
 
   clanData = data;
 
-
-  populateRankFilter(data.ranks || [], data.members || []);
   const clanName = data.clan?.name || clanKey;
   const tz = data.week?.timezone || "UTC";
   const ws = data.week?.week_start_local || "";
@@ -419,33 +411,33 @@ function renderCurrentSkills() {
   }
 
   const skills = cs.skills || [];
-
   gridEl.innerHTML = skills.map(s => {
     const name = s.skill || "—";
     const key = s.skill_key || name;
-
-    const reportedLevel = Number(s.level ?? 0);
+    const level = Number(s.level ?? 0);
     const xp = Number(s.xp ?? 0);
 
-    const dl = (window.TrackerSkills && typeof window.TrackerSkills.getDisplayLevel === "function")
-      ? window.TrackerSkills.getDisplayLevel(name, reportedLevel, xp)
-      : { displayLevel: reportedLevel, virtualLevel: reportedLevel, isVirtual: false };
+    const vLevel = (window.TrackerSkills && typeof window.TrackerSkills.virtualLevelFromXp === 'function')
+      ? window.TrackerSkills.virtualLevelFromXp(xp, name)
+      : level;
 
-    const displayLevel = Number(dl.displayLevel ?? reportedLevel);
-    const maxV = (window.TrackerSkills && typeof window.TrackerSkills.maxVirtualLevelForSkill === "function")
+    const maxV = (window.TrackerSkills && typeof window.TrackerSkills.maxVirtualLevelForSkill === 'function')
       ? window.TrackerSkills.maxVirtualLevelForSkill(name)
       : 120;
 
-    const is200m = xp >= 200000000;
+    const displayLevel = Math.max(level, vLevel);
+    const isVirtualShown = (displayLevel > level);
+
+    const is200m = xp >= 200_000_000;
     const isMaxVirtual = displayLevel >= maxV;
 
-    // Border tiers (per your latest rule)
+    // Border tiers (your latest rules)
     let tierClass = "";
     if (is200m) tierClass = "gold";
     else if (displayLevel >= 120) tierClass = "silver";
-    else if (reportedLevel >= 99) tierClass = "bronze";
+    else if (displayLevel >= 99) tierClass = "bronze";
 
-    // Badge precedence: 200m badge only
+    // Badge precedence: 200m wins (show ONLY 200m badge)
     let badgeHtml = "";
     if (is200m) {
       badgeHtml = `<img class="skillBadge" src="assets/badges/200m.png" alt="200m" />`;
@@ -461,10 +453,7 @@ function renderCurrentSkills() {
         </div>
         <div class="skillInfo">
           <div class="skillTitle">${escapeHtml(name)}</div>
-          <div class="skillLevel">
-            Level ${escapeHtml(String(displayLevel || reportedLevel || "—"))}
-            ${dl.isVirtual ? `<span class="pill">Virtual</span>` : ``}
-          </div>
+          <div class="skillLevel">Level ${escapeHtml(String(displayLevel || "—"))}${isVirtualShown ? ` <span class="pill">Virtual</span>` : ""}</div>
           <div class="skillXp">${formatNumber(xp)} XP</div>
         </div>
       </div>
@@ -648,6 +637,35 @@ async function loadPlayer(rsn, period) {
   selectedXpPeriod = data.xp?.period || period || "7d";
   populateXpPeriods(data.xp_periods || [], selectedXpPeriod);
   renderPlayer();
+
+  // If we haven't collected XP recently, trigger a refresh for this player.
+  // Then reload the player data once.
+  try {
+    const key = String(rsn || "").trim().toLowerCase();
+    if (!key) return;
+
+    const lastSnapUtc =
+      data?.last_pull?.sources?.last_xp_snapshot_utc ||
+      data?.current_skills?.captured_at_utc ||
+      null;
+
+    const age = utcAgeSeconds(lastSnapUtc);
+    const needsRefresh = (age === null) || (age > 300);
+
+    if (needsRefresh && !xpRefreshAttempted.has(key)) {
+      xpRefreshAttempted.add(key);
+
+      const refreshUrl = `${API.refreshPlayerXp}?player=${encodeURIComponent(rsn)}`;
+      const refresh = await fetchJson(refreshUrl);
+
+      if (refresh && refresh.ok && refresh.refreshed) {
+        // re-load with the same period
+        loadPlayer(rsn, selectedXpPeriod);
+      }
+    }
+  } catch {
+    // ignore refresh errors
+  }
 }
 
 /* ---------------- Render views ---------------- */
@@ -832,8 +850,7 @@ function wireUI() {
   qs("backFromClan").addEventListener("click", clearQuery);
   qs("backFromPlayer").addEventListener("click", clearQuery);
 
-    qs("rankFilter")?.addEventListener("change", renderMemberList);
-qs("memberSearch").addEventListener("input", debounce(renderMemberList, 120));
+  qs("memberSearch").addEventListener("input", debounce(renderMemberList, 120));
   document.querySelectorAll(".segBtn").forEach(btn => btn.addEventListener("click", () => setFilter(btn.dataset.filter)));
 
     const clanXpSel = qs("clanXpPeriod");
