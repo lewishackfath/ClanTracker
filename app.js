@@ -283,6 +283,20 @@ function classifyActivity(text, details) {
     return { kind: "level", skillName: skill };
   }
 
+  // Skill XP / skill-related activity (e.g. "54,000,000 XP in Archaeology")
+  // If we can confidently detect a skill name and the text mentions XP/experience,
+  // show that skill's icon for the activity row.
+  if (combined.includes("xp") || combined.includes("experience")) {
+    const skill = findSkillInText(details) || findSkillInText(text) || null;
+    if (skill) return { kind: "skill_xp", skillName: skill };
+  }
+
+  // Any other activity that names a skill: treat it as skill-related for icon purposes.
+  {
+    const skill = findSkillInText(details) || findSkillInText(text) || null;
+    if (skill) return { kind: "skill", skillName: skill };
+  }
+
   return { kind: "default" };
 }
 
@@ -721,6 +735,13 @@ function renderPlayer() {
       if (kind === "level") {
         const candidates = skillName ? [...iconCandidates("assets/skills/", skillName)] : [];
         candidates.push("assets/activity/level.png");
+        setImgWithFallback(img, candidates, "assets/activity/default.png");
+        return;
+      }
+
+      if (kind === "skill_xp" || kind === "skill") {
+        const candidates = skillName ? [...iconCandidates("assets/skills/", skillName)] : [];
+        candidates.push("assets/activity/default.png");
         setImgWithFallback(img, candidates, "assets/activity/default.png");
         return;
       }
