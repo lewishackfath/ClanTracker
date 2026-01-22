@@ -371,6 +371,7 @@ function renderMemberList() {
 
   if (clanFilter === "capped") members = members.filter(m => m.capped);
   if (clanFilter === "uncapped") members = members.filter(m => !m.capped);
+  if (clanFilter === "visited_only") members = members.filter(m => m.visited && !m.capped);
 
   if (needle) {
     members = members.filter(m =>
