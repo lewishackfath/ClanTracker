@@ -289,6 +289,7 @@ function classifyActivity(text, details) {
 /* ---------------- Clan overview state ---------------- */
 let clanData = null;
 let clanFilter = "all";
+let selectedRankFilter = "all";
 let selectedClanXpPeriod = "7d";
 
 function populateClanXpPeriods(periods, currentValue) {
@@ -353,6 +354,41 @@ function renderClanXpLeaders() {
 }
 
 
+
+function rankKey(name) {
+  return (name || "").trim().toLowerCase();
+}
+
+function populateRankFilter() {
+  const sel = qs("rankFilter");
+  if (!sel || !clanData?.ok) return;
+
+  const members = clanData.members || [];
+  const seen = new Map();
+  for (const m of members) {
+    const rn = (m.rank_name || "").trim();
+    if (!rn) continue;
+    const key = rankKey(rn);
+    if (!seen.has(key)) seen.set(key, rn);
+  }
+
+  const items = Array.from(seen.entries())
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const current = sel.value || selectedRankFilter || "all";
+  const hasCurrent = current === "all" || items.some(it => it.key === current);
+  selectedRankFilter = hasCurrent ? current : "all";
+
+  sel.innerHTML = [
+    `<option value="all">All ranks</option>`,
+    ...items.map(it => {
+      const selected = it.key === selectedRankFilter ? " selected" : "";
+      return `<option value="${escapeHtml(it.key)}"${selected}>${escapeHtml(it.label)}</option>`;
+    })
+  ].join("");
+}
+
 function setFilter(newFilter) {
   clanFilter = newFilter;
   document.querySelectorAll(".segBtn").forEach(btn => {
@@ -372,6 +408,10 @@ function renderMemberList() {
   if (clanFilter === "capped") members = members.filter(m => m.capped);
   if (clanFilter === "uncapped") members = members.filter(m => !m.capped);
   if (clanFilter === "visited_only") members = members.filter(m => m.visited && !m.capped);
+
+  if (selectedRankFilter !== "all") {
+    members = members.filter(m => rankKey(m.rank_name) === selectedRankFilter);
+  }
 
   if (needle) {
     members = members.filter(m =>
@@ -417,6 +457,9 @@ async function loadClanOverview(clanKey, period) {
   qs("clanStatus").textContent = "";
   qs("memberList").innerHTML = "";
   qs("clanLastPull").textContent = "";
+  selectedRankFilter = "all";
+  const rf = qs("rankFilter");
+  if (rf) rf.innerHTML = `<option value="all">All ranks</option>`;
   if (qs("clanXpMeta")) qs("clanXpMeta").textContent = "";
   if (qs("clanSkillLeaders")) qs("clanSkillLeaders").innerHTML = "";
 
@@ -429,6 +472,7 @@ async function loadClanOverview(clanKey, period) {
   }
 
   clanData = data;
+  populateRankFilter();
 
   const clanName = data.clan?.name || clanKey;
   const tz = data.week?.timezone || "UTC";
@@ -917,6 +961,13 @@ function wireUI() {
   qs("backFromPlayer").addEventListener("click", clearQuery);
 
   qs("memberSearch").addEventListener("input", debounce(renderMemberList, 120));
+  const rankSel = qs("rankFilter");
+  if (rankSel) {
+    rankSel.addEventListener("change", () => {
+      selectedRankFilter = rankSel.value || "all";
+      renderMemberList();
+    });
+  }
   document.querySelectorAll(".segBtn").forEach(btn => btn.addEventListener("click", () => setFilter(btn.dataset.filter)));
 
     const clanXpSel = qs("clanXpPeriod");
