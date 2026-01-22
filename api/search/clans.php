@@ -9,26 +9,26 @@ if ($q === '') {
 }
 
 $pdo = tracker_pdo();
-
 $like = '%' . $q . '%';
 
 $sql = "
 SELECT
-  c.clan_key AS `key`,
-  c.clan_name AS `name`,
+  c.id   AS `key`,
+  c.name AS `name`,
   (
     SELECT COUNT(*)
     FROM members m
-    WHERE m.clan_key = c.clan_key
+    WHERE m.clan_id = c.id
       AND m.is_active = 1
   ) AS members
 FROM clans c
 WHERE c.is_enabled = 1
+  AND c.inactive_at IS NULL
   AND (
-    c.clan_key LIKE :like
-    OR c.clan_name LIKE :like
+    CAST(c.id AS CHAR) LIKE :like
+    OR c.name LIKE :like
   )
-ORDER BY c.clan_name ASC
+ORDER BY c.name ASC
 LIMIT 20
 ";
 
@@ -36,11 +36,11 @@ try {
     $stmt = $pdo->prepare($sql);
     $stmt->execute([':like' => $like]);
     $rows = $stmt->fetchAll();
-
     tracker_json($rows);
 } catch (Throwable $e) {
     tracker_json([
         'ok' => false,
-        'error' => 'Query failed',
+        'error' => 'Clan search failed',
+        'hint' => $e->getMessage(),
     ], 500);
 }

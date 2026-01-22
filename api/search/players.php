@@ -11,11 +11,8 @@ if ($q === '') {
 $pdo = tracker_pdo();
 
 $qRaw = trim($q);
-
-// normalised: lower + collapse spaces (our helper)
 $qNorm = tracker_normalise($qRaw);
 
-// also try no-spaces variant (common RSN normalisation)
 $qNormNoSpaces = str_replace(' ', '', $qNorm);
 $qRawNoSpaces  = str_replace(' ', '', $qRaw);
 
@@ -27,24 +24,21 @@ $likeNormNoSpaces = '%' . $qNormNoSpaces . '%';
 $sql = "
 SELECT
   m.rsn AS rsn,
-  m.clan_key AS clan,
+  c.name AS clan,
+  c.id AS clan_id,
   CASE WHEN m.is_active = 1 THEN 'Active' ELSE 'Inactive' END AS status
 FROM members m
-LEFT JOIN clans c ON c.clan_key = m.clan_key
+JOIN clans c ON c.id = m.clan_id
 WHERE
-  (c.is_enabled = 1 OR c.is_enabled IS NULL)
+  c.is_enabled = 1
+  AND c.inactive_at IS NULL
   AND (
-    -- raw matches
     m.rsn LIKE :likeRaw
     OR m.rsn_normalised LIKE :likeNorm
-
-    -- space-insensitive matches
     OR REPLACE(m.rsn, ' ', '') LIKE :likeRawNoSpaces
     OR REPLACE(m.rsn_normalised, ' ', '') LIKE :likeNormNoSpaces
-
-    -- optional: allow searching by clan fields too
-    OR m.clan_key LIKE :likeRaw
-    OR c.clan_name LIKE :likeRaw
+    OR CAST(c.id AS CHAR) LIKE :likeRaw
+    OR c.name LIKE :likeRaw
   )
 ORDER BY
   m.is_active DESC,
@@ -60,12 +54,12 @@ try {
         ':likeRawNoSpaces' => $likeRawNoSpaces,
         ':likeNormNoSpaces' => $likeNormNoSpaces,
     ]);
-
     $rows = $stmt->fetchAll();
     tracker_json($rows);
 } catch (Throwable $e) {
     tracker_json([
         'ok' => false,
-        'error' => 'Query failed',
+        'error' => 'Player search failed',
+        'hint' => $e->getMessage(),
     ], 500);
 }

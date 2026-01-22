@@ -92,6 +92,17 @@ function formatNumber(n) {
   return x.toLocaleString("en-AU");
 }
 
+function formatNumbersInText(input) {
+  const s = String(input || "");
+  return s.replace(/(\d{1,3}(?:,\d{3})+|\d{4,})/g, (m) => {
+    const raw = m.replace(/,/g, "");
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return m;
+    return n.toLocaleString("en-AU");
+  });
+}
+
+
 /* ---------------- Icon handling (case-tolerant) ---------------- */
 
 function titleCaseWord(s) {
@@ -182,7 +193,9 @@ function setPlayerAvatar(rsn) {
     return;
   }
 
-  const url = `api/avatar.php?player=${encodeURIComponent(name)}`;
+    // RuneScape avatar endpoint expects underscores instead of spaces in the RSN
+  const apiName = name.replace(/\s+/g, "_");
+  const url = `api/avatar.php?player=${encodeURIComponent(apiName)}`;
   img.alt = `${name} avatar`;
 
   img.onload = () => {
@@ -566,6 +579,7 @@ function renderPlayer() {
 
   const m = playerData.member;
   const c = playerData.clan;
+  const tzLabel = (c && c.timezone) ? c.timezone : "";
   const week = playerData.week;
 
   qs("playerName").textContent = m?.rsn || "—";
@@ -575,7 +589,7 @@ function renderPlayer() {
 
   const status = (m?.is_active ? "Active" : "Inactive");
   const rank = m?.rank_name ? m.rank_name : "—";
-  qs("playerMeta").textContent = `Clan key: ${c?.key || "—"} • Rank: ${rank} • Status: ${status}`;
+  qs("playerMeta").textContent = `Clan: ${c?.name || "—"} • Rank: ${rank} • Status: ${status}`;
 
   qs("pCap").textContent = playerData.cap?.capped ? "Capped" : "Uncapped";
   qs("pVisit").textContent = playerData.visit?.visited ? "Visited" : "Not visited";
@@ -592,9 +606,9 @@ function renderPlayer() {
 
   if (activity.length) {
     activityList.innerHTML = activity.map(a => {
-      const when = a.activity_date_utc || a.announced_at_utc || "";
-      const text = a.text || "";
-      const details = a.details || "";
+      const when = a.activity_date_local || a.activity_date_utc || a.announced_at_local || a.announced_at_utc || "";
+      const text = formatNumbersInText(a.text || "");
+      const details = formatNumbersInText(a.details || "");
 
       const info = classifyActivity(text, details);
 
@@ -614,7 +628,7 @@ function renderPlayer() {
           <div class="activityMain">
             <div class="activityText">${escapeHtml(text)}</div>
             ${details ? `<div class="activityDetails">${escapeHtml(details)}</div>` : ""}
-            <div class="activityDate">${escapeHtml(when)} UTC</div>
+            <div class="activityDate">${escapeHtml(when)} ${escapeHtml(tzLabel || "UTC")}</div>
           </div>
         </div>
       `;

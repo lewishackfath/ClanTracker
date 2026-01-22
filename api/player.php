@@ -3,6 +3,19 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_db.php';
 
+/**
+ * api/player.php (NEW SCHEMA)
+ *
+ * Uses tables:
+ * - clans: id, name, timezone, reset_weekday, reset_time, is_enabled, inactive_at
+ * - members: id, clan_id, rsn, rsn_normalised, rank_name, is_active, updated_at
+ * - member_caps: clan_id, member_id, cap_week_start_utc, capped_at_utc, ...
+ * - member_citadel_visits: clan_id, member_id, cap_week_start_utc, visited_at_utc, ...
+ * - member_activities: activity_text/activity_details/... (this is the activity log)
+ * - member_xp_snapshots: member_id, total_xp, skills_json, snapshot_hash, captured_at_utc
+ * - member_poll_state: last_poll_at_utc
+ */
+
 function tracker_get_param(string $key, int $maxLen = 64): string {
     $v = (string)($_GET[$key] ?? '');
     $v = trim($v);
@@ -18,7 +31,7 @@ function tracker_week_window(array $clan): array {
 
     $now = new DateTime('now', $tz);
 
-    $resetWeekday = (int)($clan['reset_weekday'] ?? 1);
+    $resetWeekday = (int)($clan['reset_weekday'] ?? 1); // your DB appears to use 0-6 (Sun-Sat)
     $resetTimeRaw = (string)($clan['reset_time'] ?? '00:00:00');
 
     $parts = array_map('intval', explode(':', $resetTimeRaw));
@@ -31,13 +44,7 @@ function tracker_week_window(array $clan): array {
         $cand->setTime($h, $m, $s);
         if ($i > 0) $cand->modify("-{$i} days");
 
-        $match = false;
-        if ($resetWeekday >= 0 && $resetWeekday <= 6) {
-            $match = ((int)$cand->format('w') === $resetWeekday);
-        } else {
-            $match = ((int)$cand->format('N') === $resetWeekday);
-        }
-
+        $match = ((int)$cand->format('w') === $resetWeekday);
         if ($match && $cand <= $now) { $startLocal = $cand; break; }
     }
 
@@ -188,25 +195,25 @@ try {
     $playerNormNoSpaces = str_replace(' ', '', $playerNorm);
     $playerRawNoSpaces = str_replace(' ', '', $player);
 
-    // Member lookup
+    // Member lookup (NEW schema: members.clan_id -> clans.id)
     $stmt = $pdo->prepare("
         SELECT
           m.id,
-          m.clan_key,
+          m.clan_id,
           m.rsn,
           m.rsn_normalised,
           m.rank_name,
           m.is_active,
           m.updated_at,
-          c.clan_name,
+          c.name AS clan_name,
           c.timezone,
           c.reset_weekday,
-          c.reset_time,
-          c.is_enabled
+          c.reset_time
         FROM members m
-        JOIN clans c ON c.clan_key = m.clan_key
+        JOIN clans c ON c.id = m.clan_id
         WHERE
           c.is_enabled = 1
+          AND c.inactive_at IS NULL
           AND (
             m.rsn_normalised = :rn
             OR REPLACE(m.rsn_normalised, ' ', '') = :rnns
@@ -223,67 +230,65 @@ try {
         ':rawns' => $playerRawNoSpaces,
     ]);
     $member = $stmt->fetch();
-
     if (!$member) tracker_json(['ok' => false, 'error' => 'Player not found'], 404);
 
     $week = tracker_week_window($member);
     $xpWindow = tracker_period_window($period, $week);
 
-    $clanKey = (string)$member['clan_key'];
-    $rsnNorm = (string)$member['rsn_normalised'];
+    $clanId = (int)$member['clan_id'];
     $memberId = (int)$member['id'];
 
-    // Current week cap
+    // Week cap (NEW schema: member_caps has NO activity_text/activity_details)
     $stmt = $pdo->prepare("
-        SELECT capped_at_utc, activity_text, activity_details
+        SELECT capped_at_utc, rule_id
         FROM member_caps
-        WHERE clan_key = :clan AND rsn_normalised = :rn AND cap_week_start_utc = :ws
+        WHERE clan_id = :clan AND member_id = :mid AND cap_week_start_utc = :ws
         LIMIT 1
     ");
-    $stmt->execute([':clan' => $clanKey, ':rn' => $rsnNorm, ':ws' => $week['week_start_utc']]);
-    $capRow = $stmt->fetch();
+    $stmt->execute([':clan' => $clanId, ':mid' => $memberId, ':ws' => $week['week_start_utc']]);
+    $capRow = $stmt->fetch() ?: null;
 
-    // Current week visit
+    // Week visit (NEW schema: member_citadel_visits has NO activity_text/activity_details)
     $stmt = $pdo->prepare("
-        SELECT visited_at_utc, activity_text, activity_details
+        SELECT visited_at_utc, rule_id
         FROM member_citadel_visits
-        WHERE clan_key = :clan AND rsn_normalised = :rn AND visit_week_start_utc = :ws
+        WHERE clan_id = :clan AND member_id = :mid AND cap_week_start_utc = :ws
         LIMIT 1
     ");
-    $stmt->execute([':clan' => $clanKey, ':rn' => $rsnNorm, ':ws' => $week['week_start_utc']]);
-    $visitRow = $stmt->fetch();
+    $stmt->execute([':clan' => $clanId, ':mid' => $memberId, ':ws' => $week['week_start_utc']]);
+    $visitRow = $stmt->fetch() ?: null;
 
-    // Recent activity
+    // Recent activity (NEW schema: member_activities DOES have activity_text)
     $stmt = $pdo->prepare("
-        SELECT activity_date_utc, activity_text, activity_details, announced_at_utc
-        FROM member_activity_announcements
-        WHERE clan_key = :clan AND rsn_normalised = :rn
-        ORDER BY COALESCE(activity_date_utc, announced_at_utc) DESC
+        SELECT activity_date_utc, activity_text, activity_details, announced_at
+        FROM member_activities
+        WHERE member_id = :mid
+        ORDER BY COALESCE(activity_date_utc, announced_at) DESC
         LIMIT 20
     ");
-    $stmt->execute([':clan' => $clanKey, ':rn' => $rsnNorm]);
-    $activityRows = $stmt->fetchAll();
+    $stmt->execute([':mid' => $memberId]);
+    $activityRows = $stmt->fetchAll() ?: [];
 
     $latestActivityUtc = null;
-    if ($activityRows && isset($activityRows[0])) {
-        $latestActivityUtc = $activityRows[0]['activity_date_utc'] ?: $activityRows[0]['announced_at_utc'] ?: null;
+    if (!empty($activityRows)) {
+        $latestActivityUtc = $activityRows[0]['activity_date_utc'] ?: ($activityRows[0]['announced_at'] ?? null);
     }
 
-    // Latest snapshot (for current levels)
+    // Latest XP snapshot (NEW schema: member_xp_snapshots by member_id)
     $stmt = $pdo->prepare("
         SELECT captured_at_utc, total_xp, skills_json
-        FROM player_xp_snapshots
-        WHERE clan_key = :clan AND rsn_normalised = :rn
+        FROM member_xp_snapshots
+        WHERE member_id = :mid
         ORDER BY captured_at_utc DESC
         LIMIT 1
     ");
-    $stmt->execute([':clan' => $clanKey, ':rn' => $rsnNorm]);
-    $latestSnap = $stmt->fetch();
+    $stmt->execute([':mid' => $memberId]);
+    $latestSnap = $stmt->fetch() ?: null;
     $latestSnapUtc = $latestSnap['captured_at_utc'] ?? null;
 
-    // ✅ FIXED: member_poll_state lookup by member_id only
+    // Poll state (NEW schema: last_poll_at_utc)
     $stmt = $pdo->prepare("
-        SELECT last_polled_at_utc
+        SELECT last_poll_at_utc
         FROM member_poll_state
         WHERE member_id = :mid
         LIMIT 1
@@ -292,26 +297,26 @@ try {
     $lastPolledUtc = $stmt->fetchColumn();
     if ($lastPolledUtc === false) $lastPolledUtc = null;
 
-    // Period snapshots for XP gained
+    // Period snapshots for XP gained (member_xp_snapshots)
     $stmt = $pdo->prepare("
         SELECT captured_at_utc, total_xp, skills_json
-        FROM player_xp_snapshots
-        WHERE clan_key = :clan AND rsn_normalised = :rn AND captured_at_utc <= :endUtc
+        FROM member_xp_snapshots
+        WHERE member_id = :mid AND captured_at_utc <= :endUtc
         ORDER BY captured_at_utc DESC
         LIMIT 1
     ");
-    $stmt->execute([':clan' => $clanKey, ':rn' => $rsnNorm, ':endUtc' => $xpWindow['end_utc']]);
-    $endSnap = $stmt->fetch();
+    $stmt->execute([':mid' => $memberId, ':endUtc' => $xpWindow['end_utc']]);
+    $endSnap = $stmt->fetch() ?: null;
 
     $stmt = $pdo->prepare("
         SELECT captured_at_utc, total_xp, skills_json
-        FROM player_xp_snapshots
-        WHERE clan_key = :clan AND rsn_normalised = :rn AND captured_at_utc >= :startUtc
+        FROM member_xp_snapshots
+        WHERE member_id = :mid AND captured_at_utc >= :startUtc
         ORDER BY captured_at_utc ASC
         LIMIT 1
     ");
-    $stmt->execute([':clan' => $clanKey, ':rn' => $rsnNorm, ':startUtc' => $xpWindow['start_utc']]);
-    $startSnap = $stmt->fetch();
+    $stmt->execute([':mid' => $memberId, ':startUtc' => $xpWindow['start_utc']]);
+    $startSnap = $stmt->fetch() ?: null;
 
     $xp = [
         'period' => $xpWindow['period'],
@@ -334,8 +339,8 @@ try {
         $endSkills   = tracker_extract_skill_stats(tracker_parse_skills_json($endSnap['skills_json']));
 
         $diffs = [];
-        foreach ($endSkills as $skill => $st) {
-            $endXp = $st['xp'];
+        foreach ($endSkills as $skill => $stRow) {
+            $endXp = $stRow['xp'];
             $startXp = $startSkills[$skill]['xp'] ?? null;
             if ($endXp === null || $startXp === null) continue;
             $d = (int)$endXp - (int)$startXp;
@@ -378,12 +383,12 @@ try {
         $ordered = [];
 
         foreach ($order as $skillName) {
-            $st = $stats[$skillName] ?? ['level' => null, 'xp' => null];
+            $stRow = $stats[$skillName] ?? ['level' => null, 'xp' => null];
             $ordered[] = [
                 'skill' => $skillName,
                 'skill_key' => tracker_skill_key($skillName),
-                'level' => $st['level'],
-                'xp' => $st['xp'],
+                'level' => $stRow['level'],
+                'xp' => $stRow['xp'],
             ];
         }
 
@@ -394,7 +399,7 @@ try {
         ];
     }
 
-    // Last pull
+    // Last pull (max of poll/snapshot/activity)
     $lastPullUtc = tracker_dtmax([$lastPolledUtc, $latestSnapUtc, $latestActivityUtc]);
     $lastPullLocal = tracker_to_local($lastPullUtc, (string)$week['timezone']);
 
@@ -408,7 +413,7 @@ try {
             'is_active' => (int)$member['is_active'] === 1,
         ],
         'clan' => [
-            'key' => $member['clan_key'],
+            'id' => $clanId,
             'name' => $member['clan_name'],
             'timezone' => $week['timezone'],
             'reset_weekday' => (int)$member['reset_weekday'],
@@ -418,21 +423,27 @@ try {
         'cap' => [
             'capped' => $capRow ? true : false,
             'capped_at_utc' => $capRow['capped_at_utc'] ?? null,
-            'activity_text' => $capRow['activity_text'] ?? null,
-            'activity_details' => $capRow['activity_details'] ?? null,
+            'capped_at_local' => tracker_to_local($capRow['capped_at_utc'] ?? null, (string)$week['timezone']),
+            'rule_id' => $capRow['rule_id'] ?? null,
         ],
         'visit' => [
             'visited' => $visitRow ? true : false,
             'visited_at_utc' => $visitRow['visited_at_utc'] ?? null,
-            'activity_text' => $visitRow['activity_text'] ?? null,
-            'activity_details' => $visitRow['activity_details'] ?? null,
+            'visited_at_local' => tracker_to_local($visitRow['visited_at_utc'] ?? null, (string)$week['timezone']),
+            'rule_id' => $visitRow['rule_id'] ?? null,
         ],
-        'recent_activity' => array_map(static function(array $r) {
+        'recent_activity' => array_map(static function(array $r) use ($week) {
+            $actUtc = $r['activity_date_utc'] ?? null;
+            $annUtc = $r['announced_at'] ?? null;
+
             return [
-                'activity_date_utc' => $r['activity_date_utc'],
-                'announced_at_utc' => $r['announced_at_utc'],
-                'text' => $r['activity_text'],
-                'details' => $r['activity_details'],
+                'activity_date_utc' => $actUtc,
+                'activity_date_local' => tracker_to_local($actUtc, (string)$week['timezone']),
+                'announced_at_utc' => $annUtc,
+                'announced_at_local' => tracker_to_local($annUtc, (string)$week['timezone']),
+                'timezone' => $week['timezone'],
+                'text' => $r['activity_text'] ?? null,
+                'details' => $r['activity_details'] ?? null,
             ];
         }, $activityRows),
         'xp' => $xp,
@@ -450,7 +461,7 @@ try {
             'local' => $lastPullLocal,
             'timezone' => $week['timezone'],
             'sources' => [
-                'last_polled_at_utc' => $lastPolledUtc ?: null,
+                'last_poll_at_utc' => $lastPolledUtc ?: null,
                 'last_xp_snapshot_utc' => $latestSnapUtc ?: null,
                 'last_activity_utc' => $latestActivityUtc ?: null,
             ],

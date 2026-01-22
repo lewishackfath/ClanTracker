@@ -171,20 +171,20 @@ function tracker_to_local(?string $utcDt, string $tzName): ?string {
     }
 }
 
-$clanKey = tracker_get_param('clan', 32);
-if ($clanKey === '') tracker_json(['ok' => false, 'error' => 'Missing clan'], 400);
+$clanId = (int)tracker_get_param('clan', 16);
+if ($clanId <= 0) tracker_json(['ok' => false, 'error' => 'Missing clan'], 400);
 
 $period = tracker_get_param('period', 16);
 
 $pdo = tracker_pdo();
 
 $stmt = $pdo->prepare("
-SELECT clan_key, clan_name, timezone, reset_weekday, reset_time, is_enabled
+SELECT id, name, timezone, reset_weekday, reset_time, is_enabled
 FROM clans
-WHERE clan_key = :ck AND is_enabled = 1
+WHERE id = :id AND is_enabled = 1 AND inactive_at IS NULL
 LIMIT 1
 ");
-$stmt->execute([':ck' => $clanKey]);
+$stmt->execute([':id' => $clanId]);
 $clan = $stmt->fetch();
 if (!$clan) tracker_json(['ok' => false, 'error' => 'Clan not found'], 404);
 
@@ -202,19 +202,19 @@ SELECT
   (mv.id IS NOT NULL) AS visited
 FROM members m
 LEFT JOIN member_caps mc
-  ON mc.clan_key = m.clan_key
- AND mc.rsn_normalised = m.rsn_normalised
+  ON mc.clan_id = m.clan_id
+ AND mc.member_id = m.id
  AND mc.cap_week_start_utc = :ws
 LEFT JOIN member_citadel_visits mv
-  ON mv.clan_key = m.clan_key
- AND mv.rsn_normalised = m.rsn_normalised
- AND mv.visit_week_start_utc = :ws
-WHERE m.clan_key = :ck
+  ON mv.clan_id = m.clan_id
+ AND mv.member_id = m.id
+ AND mv.cap_week_start_utc = :ws
+WHERE m.clan_id = :cid
   AND m.is_active = 1
 ORDER BY m.rsn ASC
 ");
 
-$stmt->execute([':ck' => $clanKey, ':ws' => $ws]);
+$stmt->execute([':cid' => $clanId, ':ws' => $ws]);
 
 $members = $stmt->fetchAll();
 
@@ -237,16 +237,16 @@ $uncapped = $active - $capped;
 $percent = $active > 0 ? (int)round(($capped / $active) * 100) : 0;
 
 // Last data pull indicators
-$stmt = $pdo->prepare("SELECT MAX(last_polled_at_utc) AS v FROM member_poll_state WHERE clan_key = :ck");
-$stmt->execute([':ck' => $clanKey]);
+$stmt = $pdo->prepare("SELECT MAX(last_poll_at_utc) AS v FROM member_poll_state WHERE clan_id = :cid");
+$stmt->execute([':cid' => $clanId]);
 $lastPolled = $stmt->fetchColumn();
 
-$stmt = $pdo->prepare("SELECT MAX(captured_at_utc) AS v FROM player_xp_snapshots WHERE clan_key = :ck");
-$stmt->execute([':ck' => $clanKey]);
+$stmt = $pdo->prepare("SELECT MAX(s.captured_at_utc) AS v FROM member_xp_snapshots s JOIN members m ON m.id = s.member_id WHERE m.clan_id = :cid");
+$stmt->execute([':cid' => $clanId]);
 $lastSnapshot = $stmt->fetchColumn();
 
-$stmt = $pdo->prepare("SELECT MAX(last_member_sync_at) AS v FROM members WHERE clan_key = :ck");
-$stmt->execute([':ck' => $clanKey]);
+$stmt = $pdo->prepare("SELECT MAX(last_sync) AS v FROM members WHERE clan_id = :cid");
+$stmt->execute([':cid' => $clanId]);
 $lastSync = $stmt->fetchColumn();
 
 $lastPullUtc = tracker_dtmax([$lastPolled, $lastSnapshot, $lastSync]);
@@ -278,42 +278,37 @@ $stmt = $pdo->prepare("
       s_start.skills_json AS start_skills_json,
       s_end.skills_json   AS end_skills_json
     FROM members m
-    LEFT JOIN player_xp_snapshots s_start
-      ON s_start.clan_key = :ck
-     AND s_start.rsn_normalised = m.rsn_normalised
+    LEFT JOIN member_xp_snapshots s_start
+      ON s_start.member_id = m.id
      AND s_start.captured_at_utc = COALESCE(
         (
           SELECT MAX(ps1.captured_at_utc)
-          FROM player_xp_snapshots ps1
-          WHERE ps1.clan_key = :ck
-            AND ps1.rsn_normalised = m.rsn_normalised
+          FROM member_xp_snapshots ps1
+          WHERE ps1.member_id = m.id
             AND ps1.captured_at_utc <= :startUtc
         ),
         (
           SELECT MIN(ps2.captured_at_utc)
-          FROM player_xp_snapshots ps2
-          WHERE ps2.clan_key = :ck
-            AND ps2.rsn_normalised = m.rsn_normalised
+          FROM member_xp_snapshots ps2
+          WHERE ps2.member_id = m.id
             AND ps2.captured_at_utc >= :startUtc
         )
      )
-    LEFT JOIN player_xp_snapshots s_end
-      ON s_end.clan_key = :ck
-     AND s_end.rsn_normalised = m.rsn_normalised
+    LEFT JOIN member_xp_snapshots s_end
+      ON s_end.member_id = m.id
      AND s_end.captured_at_utc = (
         SELECT MAX(ps3.captured_at_utc)
-        FROM player_xp_snapshots ps3
-        WHERE ps3.clan_key = :ck
-          AND ps3.rsn_normalised = m.rsn_normalised
+        FROM member_xp_snapshots ps3
+        WHERE ps3.member_id = m.id
           AND ps3.captured_at_utc <= :endUtc
      )
-    WHERE m.clan_key = :ck
+    WHERE m.clan_id = :cid
       AND m.is_active = 1
   ");
 
 try {
     $stmt->execute([
-        ':ck' => $clanKey,
+        ':cid' => $clanId,
         ':startUtc' => $xpWindow['start_utc'],
         ':endUtc' => $xpWindow['end_utc'],
     ]);
@@ -353,8 +348,8 @@ $leadersList = array_values($leaders);
 tracker_json([
     'ok' => true,
     'clan' => [
-        'key' => $clan['clan_key'],
-        'name' => $clan['clan_name'],
+        'id' => (int)$clan['id'],
+        'name' => $clan['name'],
         'timezone' => $week['timezone'],
         'reset_weekday' => (int)$clan['reset_weekday'],
         'reset_time' => (string)$clan['reset_time'],
