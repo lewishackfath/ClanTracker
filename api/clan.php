@@ -62,9 +62,16 @@ function tracker_week_window(array $clan): array {
 }
 
 function tracker_period_window(string $period, array $weekWindow): array {
-    $nowUtc = new DateTime('now', new DateTimeZone('UTC'));
     $period = strtolower(trim($period));
     if ($period === '') $period = '7d';
+
+    // Clan timezone (falls back to UTC)
+    $tzName = (string)($weekWindow['timezone'] ?? 'UTC');
+    try { $clanTz = new DateTimeZone($tzName); }
+    catch (Throwable $e) { $tzName = 'UTC'; $clanTz = new DateTimeZone('UTC'); }
+
+    $nowUtc = new DateTime('now', new DateTimeZone('UTC'));
+    $nowLocal = new DateTime('now', $clanTz);
 
     if ($period === 'thisweek') {
         return [
@@ -83,6 +90,43 @@ function tracker_period_window(string $period, array $weekWindow): array {
             'period' => 'lastweek',
             'start_utc' => $start->format('Y-m-d H:i:s'),
             'end_utc' => $end->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    // Month windows are based on the clan's local timezone
+    if ($period === 'thismonth') {
+        $startLocal = new DateTime($nowLocal->format('Y-m-01 00:00:00'), $clanTz);
+        $startUtc = clone $startLocal; $startUtc->setTimezone(new DateTimeZone('UTC'));
+        return [
+            'period' => 'thismonth',
+            'start_utc' => $startUtc->format('Y-m-d H:i:s'),
+            'end_utc' => $nowUtc->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    if ($period === 'lastmonth') {
+        $startThisMonthLocal = new DateTime($nowLocal->format('Y-m-01 00:00:00'), $clanTz);
+        $startLastMonthLocal = clone $startThisMonthLocal;
+        $startLastMonthLocal->modify('-1 month');
+
+        $startUtc = clone $startLastMonthLocal; $startUtc->setTimezone(new DateTimeZone('UTC'));
+        $endUtc = clone $startThisMonthLocal; $endUtc->setTimezone(new DateTimeZone('UTC'));
+        // make end inclusive for queries using <= :endUtc
+        $endUtc->modify('-1 second');
+
+        return [
+            'period' => 'lastmonth',
+            'start_utc' => $startUtc->format('Y-m-d H:i:s'),
+            'end_utc' => $endUtc->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    // All-time: let the queries find the earliest snapshot automatically
+    if ($period === 'alltime') {
+        return [
+            'period' => 'alltime',
+            'start_utc' => '1970-01-01 00:00:00',
+            'end_utc' => $nowUtc->format('Y-m-d H:i:s'),
         ];
     }
 
@@ -381,6 +425,9 @@ tracker_json([
         ['value' => '7d', 'label' => 'Last 7 days'],
         ['value' => '30d', 'label' => 'Last 30 days'],
         ['value' => '90d', 'label' => 'Last 90 days'],
+        ['value' => 'thismonth', 'label' => 'This month'],
+        ['value' => 'lastmonth', 'label' => 'Last month'],
+        ['value' => 'alltime', 'label' => 'All time'],
         ['value' => 'thisweek', 'label' => 'This clan week'],
         ['value' => 'lastweek', 'label' => 'Last clan week'],
     ],
