@@ -389,6 +389,66 @@ try {
 
 $leadersList = array_values($leaders);
 
+$skills = tracker_skill_order();
+
+// Optional: return top 10 earners for a single skill in the selected period
+$requestedSkillRaw = isset($_GET['skill']) ? trim((string)$_GET['skill']) : '';
+if ($requestedSkillRaw !== '') {
+    $requestedSkill = null;
+    foreach ($skills as $sn) {
+        if (strcasecmp($sn, $requestedSkillRaw) === 0) { $requestedSkill = $sn; break; }
+    }
+    // Also allow skill_key style inputs (e.g. "ranged", "slayer")
+    if ($requestedSkill === null) {
+        $needle = strtolower(preg_replace('/[^a-z0-9]+/i', '_', $requestedSkillRaw));
+        $needle = trim($needle, '_');
+        foreach ($skills as $sn) {
+            if (tracker_skill_key($sn) === $needle) { $requestedSkill = $sn; break; }
+        }
+    }
+
+    if ($requestedSkill === null) {
+        tracker_json(['ok' => false, 'error' => 'Unknown skill'], 400);
+    }
+
+    $earners = [];
+    foreach (($rows ?? []) as $r) {
+        $rsn = (string)$r['rsn'];
+        $startSkills = tracker_extract_skill_xp(tracker_parse_skills_json($r['start_skills_json']));
+        $endSkills   = tracker_extract_skill_xp(tracker_parse_skills_json($r['end_skills_json']));
+
+        $sx = $startSkills[$requestedSkill] ?? null;
+        $ex = $endSkills[$requestedSkill] ?? null;
+        if ($sx === null || $ex === null) continue;
+
+        $gain = (int)$ex - (int)$sx;
+        if ($gain <= 0) continue;
+
+        $earners[] = ['rsn' => $rsn, 'gained_xp' => $gain];
+    }
+
+    usort($earners, static function($a, $b) {
+        $ga = (int)($a['gained_xp'] ?? 0);
+        $gb = (int)($b['gained_xp'] ?? 0);
+        if ($ga !== $gb) return $gb <=> $ga; // desc
+        return strcasecmp((string)$a['rsn'], (string)$b['rsn']); // asc
+    });
+
+    $earners = array_slice($earners, 0, 10);
+
+    tracker_json([
+        'ok' => true,
+        'skill' => $requestedSkill,
+        'skill_key' => tracker_skill_key($requestedSkill),
+        'xp' => [
+            'period' => $xpWindow['period'],
+            'start_utc' => $xpWindow['start_utc'],
+            'end_utc' => $xpWindow['end_utc'],
+        ],
+        'top_earners' => $earners,
+    ]);
+}
+
 tracker_json([
     'ok' => true,
     'clan' => [
