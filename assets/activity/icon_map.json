@@ -11,4 +11,9 @@
     "icon": "assets/activity/arch_mystery.png",
     "activity_text": "Solved an archaeological mystery."
   },
+  "Citadel": {
+    "icon": "assets/activity/citadel.png",
+    "activity_regex": "^(Capped|Visited) (at )?my Clan Citadel\\.$",
+    "regex_flags": "i"
+  },
 }

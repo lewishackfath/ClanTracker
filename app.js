@@ -5,7 +5,7 @@ const API = {
   players: "api/search/players.php",
   clanOverview: "api/clan.php",
   player: "api/player.php",
-  refreshPlayerXp: "api/refresh_player_xp.php",
+  refreshPlayerXp: "api/refresh_member_data.php",
 };
 
 /* ---------------- XP refresh helper ---------------- */
@@ -945,7 +945,7 @@ async function loadPlayer(rsn, period) {
       xpRefreshAttempted.add(key);
 
       const rsnForRefresh = String(rsn || "").trim().replace(/\s+/g, "_");
-      const refreshUrl = `${API.refreshPlayerXp}?player=${encodeURIComponent(rsnForRefresh)}`;
+      const refreshUrl = `${API.refreshPlayerXp}?rsn=${encodeURIComponent(rsnForRefresh)}`;
       const refresh = await fetchJson(refreshUrl);
 
       if (refresh && refresh.ok && refresh.refreshed) {
