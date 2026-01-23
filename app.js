@@ -241,7 +241,13 @@ function findMappedActivityIcon(activity, iconMap) {
     if (entry.activity_regex) {
       try {
         const re = new RegExp(entry.activity_regex, entry.regex_flags || "i");
-        if (re.test((activity?.text || "") + " " + (activity?.details || ""))) return entry.icon;
+        const t = (activity?.text || "");
+        const d = (activity?.details || "");
+        const td = `${t} ${d}`.trim();
+
+        // Test text + details together, but also separately so anchored regexes (^...$)
+        // still work even when details exists.
+        if (re.test(t) || re.test(d) || re.test(td)) return entry.icon;
       } catch {
         // ignore bad regex
       }

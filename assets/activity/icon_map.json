@@ -16,4 +16,9 @@
     "activity_regex": "^(Capped|Visited) (at )?my Clan Citadel\\.$",
     "regex_flags": "i"
   },
+  "KalphiteKing": {
+    "icon": "assets/activity/monsters/kalphite_king.png",
+    "activity_regex": "^I killed \\d+ Kalphite Kings\\.$",
+    "regex_flags": "i"
+  },
 }
