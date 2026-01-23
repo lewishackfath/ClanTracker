@@ -253,6 +253,7 @@ function rm_parse_xp_snapshot_div10(array $profile): ?array
 
     $map = rm_skill_id_map();
     $skills = [];
+    $totalLevel = 0;
 
     foreach ($skillvalues as $row) {
         if (!is_array($row)) continue;
@@ -266,6 +267,9 @@ function rm_parse_xp_snapshot_div10(array $profile): ?array
             'level' => max(0, $level),
             'xp'    => rm_xp_div10(max(0, $xpRaw)),
         ];
+
+        // total level across all skills (excludes "Overall" because we don't map it)
+        $totalLevel += max(0, $level);
     }
 
     if (empty($skills)) {
@@ -274,10 +278,25 @@ function rm_parse_xp_snapshot_div10(array $profile): ?array
 
     $totalXp = 0;
     if (isset($profile['totalxp']) && is_numeric($profile['totalxp'])) {
-        $totalXp = rm_xp_div10((int)$profile['totalxp']);
+        $totalXp = $profile['totalxp'];
     } else {
         foreach ($skills as $s) $totalXp += (int)$s['xp'];
     }
+
+    // If RuneMetrics provides a total skill/level field, prefer it; otherwise use summed levels.
+    if (isset($profile['totalskill']) && is_numeric($profile['totalskill'])) {
+        $totalLevel = (int)$profile['totalskill'];
+    } elseif (isset($profile['totallevel']) && is_numeric($profile['totallevel'])) {
+        $totalLevel = (int)$profile['totallevel'];
+    }
+
+    // Insert total as a skill-like entry (level + xp)
+    $skills = array_merge([
+        'total' => [
+            'level' => (int)$totalLevel,
+            'xp'    => (int)$totalXp,
+        ],
+    ], $skills);
 
     ksort($skills);
     $skillsJson = json_encode($skills, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

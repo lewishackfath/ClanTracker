@@ -705,8 +705,39 @@ function renderCurrentSkills() {
     return;
   }
 
-  const skills = cs.skills || [];
+  const skills = (cs.skills || []).slice();
+
+  // Add Total Level tile (from API: current_skills.total)
+  if (cs.total && (cs.total.level !== undefined || cs.total.xp !== undefined)) {
+    skills.push({
+      __is_total: true,
+      skill: "Total Level",
+      skill_key: "total",
+      level: cs.total.level ?? null,
+      xp: cs.total.xp ?? null,
+    });
+  }
+
   gridEl.innerHTML = skills.map(s => {
+    if (s && s.__is_total) {
+      const lvl = (s.level === null || s.level === undefined) ? "—" : String(s.level);
+      const xp = (s.xp === null || s.xp === undefined) ? null : Number(s.xp);
+      return `
+        <div class="skillCard total">
+          <div class="skillIconWrap">
+            <img class="skillIcon"
+               src="/assets/skills/total.png"
+               alt="Total Level" />
+          </div>
+          <div class="skillInfo">
+            <div class="skillTitle">Total Level</div>
+            <div class="skillLevel">Level ${escapeHtml(lvl)}</div>
+            <div class="skillXp">${formatNumber(xp)} XP</div>
+          </div>
+        </div>
+      `;
+    }
+
     const name = s.skill || "—";
     const key = s.skill_key || name;
     const level = Number(s.level ?? 0);

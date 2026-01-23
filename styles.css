@@ -568,3 +568,22 @@ body::before {
   flex: 0 0 auto;
 }
 
+
+
+/* Total Level tile */
+.skillCard.total {
+  border: 2px solid rgba(255, 215, 0, 0.55);
+  background: rgba(255, 215, 0, 0.06);
+}
+.totalIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 18px;
+  color: rgba(255, 215, 0, 0.95);
+}

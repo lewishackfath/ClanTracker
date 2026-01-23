@@ -422,7 +422,29 @@ try {
     ];
 
     if ($latestSnap) {
-        $stats = tracker_extract_skill_stats(tracker_parse_skills_json($latestSnap['skills_json']));
+        $rawSkills = tracker_parse_skills_json($latestSnap['skills_json']);
+        $stats = tracker_extract_skill_stats($rawSkills);
+
+        // Total (prefer skills_json.total, else compute)
+        $totalLevel = null;
+        $totalXp = isset($latestSnap['total_xp']) && is_numeric($latestSnap['total_xp']) ? (int)$latestSnap['total_xp'] : null;
+
+        if (isset($rawSkills['total']) && is_array($rawSkills['total'])) {
+            $tl = $rawSkills['total']['level'] ?? null;
+            $tx = $rawSkills['total']['xp'] ?? null;
+            if (is_numeric($tl)) $totalLevel = (int)$tl;
+            if ($totalXp === null && is_numeric($tx)) $totalXp = (int)$tx;
+        }
+
+        if ($totalLevel === null) {
+            $sum = 0;
+            foreach (tracker_skill_order() as $sn) {
+                $lvl = $stats[$sn]['level'] ?? null;
+                if (is_numeric($lvl)) $sum += (int)$lvl;
+            }
+            $totalLevel = $sum;
+        }
+
         $order = tracker_skill_order();
         $ordered = [];
 
@@ -440,6 +462,10 @@ try {
             'has_data' => true,
             'captured_at_utc' => $latestSnap['captured_at_utc'],
             'skills' => $ordered,
+            'total' => [
+                'level' => $totalLevel,
+                'xp' => $totalXp,
+            ],
         ];
     }
 
