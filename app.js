@@ -143,6 +143,117 @@ function iconCandidates(basePath, keyOrName) {
   return Array.from(uniq).filter(p => !p.endsWith("/.png"));
 }
 
+
+/* ---------------- Activity icon map (optional, JSON-driven) ----------------
+   Create either of these files:
+   - assets/activity/icon_map.json
+   - assets/activity_icons/icon_map.json
+
+   Example:
+   {
+     "Fealty3": {"icon":"assets/activity_icons/fealty_3.png","activity_text":"Maintained Clan Fealty 3"},
+     "ArchaeologyXP": {"icon":"assets/skills/archaeology.png","activity_regex":"\\bxp\\b.*\\barchaeology\\b","regex_flags":"i"}
+   }
+
+   Notes:
+   - activity_text is a case-insensitive substring match against (text + details)
+   - activity_regex is optional; treated as a JS RegExp string
+   - icon paths may be absolute (/assets/...) or relative (assets/...)
+-------------------------------------------------------------------------- */
+
+const ACTIVITY_ICON_MAP_URLS = [
+  "assets/activity/icon_map.json",
+  "assets/activity_icons/icon_map.json",
+];
+
+let _activityIconMapPromise = null;
+
+function _stripBom(s) {
+  if (!s) return s;
+  // Remove UTF-8 BOM if present
+  return s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s;
+}
+
+// Best-effort: allow trailing commas in JSON (common mistake)
+function _relaxJson(text) {
+  let t = _stripBom(String(text || ""));
+  // Remove trailing commas before } or ]
+  t = t.replace(/,\s*(\}|\])/g, "$1");
+  return t;
+}
+
+function loadActivityIconMap() {
+  if (_activityIconMapPromise) return _activityIconMapPromise;
+
+  _activityIconMapPromise = (async () => {
+    for (const url of ACTIVITY_ICON_MAP_URLS) {
+      try {
+        const r = await fetch(url, { cache: "no-store" });
+        if (!r.ok) continue;
+        const txt = await r.text();
+        try {
+          const obj = JSON.parse(_relaxJson(txt));
+          if (obj && typeof obj === "object") return obj;
+        } catch {
+          // invalid json, try next path
+        }
+      } catch {
+        // ignore and try next path
+      }
+    }
+    return {};
+  })();
+
+  return _activityIconMapPromise;
+}
+
+function _norm(s) {
+  return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function _mappedIconCandidates(iconPath) {
+  if (!iconPath) return [];
+  const raw = String(iconPath);
+  const noLead = raw.replace(/^\//, "");
+  const baseDir = window.location.pathname.replace(/[^\/]*$/, "");
+  const basePrefixed = baseDir + noLead;
+
+  const out = [];
+  if (raw) out.push(raw);
+  if (noLead && noLead !== raw) out.push(noLead);
+  if (basePrefixed && basePrefixed !== raw && basePrefixed !== noLead) out.push(basePrefixed);
+  return out;
+}
+
+function findMappedActivityIcon(activity, iconMap) {
+  if (!iconMap) return null;
+  const combined = _norm((activity?.text || "") + " " + (activity?.details || ""));
+
+  for (const key of Object.keys(iconMap)) {
+    const entry = iconMap[key];
+    if (!entry || !entry.icon) continue;
+
+    if (entry.activity_text) {
+      const needle = _norm(entry.activity_text);
+      if (needle && combined.includes(needle)) return entry.icon;
+    }
+
+    if (entry.activity_regex) {
+      try {
+        const re = new RegExp(entry.activity_regex, entry.regex_flags || "i");
+        if (re.test((activity?.text || "") + " " + (activity?.details || ""))) return entry.icon;
+      } catch {
+        // ignore bad regex
+      }
+    }
+  }
+
+  return null;
+}
+
+// Start fetching early (non-blocking)
+loadActivityIconMap();
+
 function setImgWithFallback(imgEl, candidates, finalFallback) {
   if (!imgEl) return;
 
@@ -698,7 +809,7 @@ function renderPlayer() {
   qs("activityStatus").textContent = `${activity.length} items`;
 
   if (activity.length) {
-    activityList.innerHTML = activity.map(a => {
+    activityList.innerHTML = activity.map((a, i) => {
       const when = a.activity_date_local || a.activity_date_utc || a.announced_at_local || a.announced_at_utc || "";
       const text = formatNumbersInText(a.text || "");
       const details = formatNumbersInText(a.details || "");
@@ -714,6 +825,7 @@ function renderPlayer() {
       return `
         <div class="${rowClass}">
           <img class="miniIcon"
+               data-idx="${i}"
                data-kind="${escapeHtml(info.kind)}"
                data-skill="${escapeHtml(info.skillName || "")}"
                data-item="${escapeHtml(info.itemName || "")}"
@@ -769,6 +881,19 @@ function renderPlayer() {
       }
 
       setImgWithFallback(img, ["assets/activity/default.png"], "assets/activity/default.png");
+    });
+
+    // Apply JSON icon overrides (if any mappings match)
+    loadActivityIconMap().then(iconMap => {
+      if (!iconMap) return;
+      const list = playerData?.recent_activity || [];
+      activityList.querySelectorAll("img.miniIcon").forEach(img => {
+        const idx = Number(img.getAttribute("data-idx") || "NaN");
+        if (!Number.isFinite(idx)) return;
+        const a = list[idx];
+        const mapped = findMappedActivityIcon(a, iconMap);
+        if (mapped) setImgWithFallback(img, _mappedIconCandidates(mapped), "assets/activity/default.png");
+      });
     });
   } else {
     activityList.innerHTML = `<div class="muted">No recent activity recorded.</div>`;

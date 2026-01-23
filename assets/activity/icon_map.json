@@ -1,0 +1,14 @@
+{
+  "Fealty3": {
+    "icon": "assets/activity/fealty_3.png",
+    "activity_text": "Maintained Clan Fealty 3"
+  },
+  "Fealty2": {
+    "icon": "assets/activity/fealty_2.png",
+    "activity_text": "Maintained Clan Fealty 2"
+  },
+  "Mystery": {
+    "icon": "assets/activity/arch_mystery.png",
+    "activity_text": "Solved an archaeological mystery."
+  },
+}
