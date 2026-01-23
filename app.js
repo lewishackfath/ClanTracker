@@ -564,10 +564,13 @@ function renderClanXpLeaders() {
 
 
 function setFilter(newFilter) {
-  clanFilter = newFilter;
+  clanFilter = String(newFilter || "all").trim().toLowerCase();
+
   document.querySelectorAll(".segBtn").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.filter === clanFilter);
+    const bf = String(btn.dataset.filter || "").trim().toLowerCase();
+    btn.classList.toggle("active", bf === clanFilter);
   });
+
   renderMemberList();
 }
 
@@ -579,8 +582,26 @@ function renderMemberList() {
 
   let members = clanData.members || [];
 
-  if (clanFilter === "capped") members = members.filter(m => m.capped);
-  if (clanFilter === "uncapped") members = members.filter(m => !m.capped);
+  const f = String(clanFilter || "all").trim().toLowerCase();
+
+  // Be tolerant of schema differences in member objects
+  const getCapped = (m) => !!(m?.capped ?? m?.has_capped ?? m?.is_capped ?? false);
+  const getVisited = (m) => !!(m?.visited ?? m?.has_visited ?? m?.is_visited ?? m?.visited_this_week ?? false);
+  const getRank = (m) => String(m?.rank_name ?? m?.rank ?? "").trim();
+
+  if (f === "capped") {
+    members = members.filter(m => getCapped(m));
+  } else if (f === "uncapped") {
+    members = members.filter(m => !getCapped(m));
+  } else if (f === "visitedonly" || f === "visited_only" || f === "visited-only") {
+    members = members.filter(m => getVisited(m) && !getCapped(m));
+  } else if (f.startsWith("rank:") || f.startsWith("rank=")) {
+    const wanted = f.split(/[:=]/)[1] || "";
+    members = members.filter(m => getRank(m).toLowerCase() === wanted.toLowerCase());
+  } else if (f !== "all" && f !== "") {
+    // Treat any other filter value as a rank name (e.g., "Admin", "Recruit")
+    members = members.filter(m => getRank(m).toLowerCase() === f);
+  }
 
   if (needle) {
     members = members.filter(m =>
@@ -592,8 +613,11 @@ function renderMemberList() {
   qs("clanStatus").textContent = `${members.length} shown`;
 
   listEl.innerHTML = members.map(m => {
-    const badge = m.capped ? "Capped" : "Uncapped";
-    const meta = m.rank_name ? escapeHtml(m.rank_name) : "—";
+    const isCapped = !!(m?.capped ?? m?.has_capped ?? m?.is_capped ?? false);
+    const isVisited = !!(m?.visited ?? m?.has_visited ?? m?.is_visited ?? m?.visited_this_week ?? false);
+    const badge = isCapped ? "Capped" : (isVisited ? "Visited" : "Uncapped");
+    const metaVal = (m.rank_name ?? m.rank ?? "");
+    const meta = metaVal ? escapeHtml(metaVal) : "—";
     return `
       <div class="memberCard clickable" data-rsn="${escapeHtml(m.rsn)}" title="Open player">
         <div class="memberLeft">
