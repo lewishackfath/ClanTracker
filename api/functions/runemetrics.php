@@ -71,14 +71,20 @@ function runemetrics_sync_member(PDO $pdo, int $memberId, int $activities = 20):
         $profile = rm_fetch_profile((string)$member['rsn'], $activities);
 
         // Handle private RuneMetrics profiles (poll less frequently in scheduler)
-        if (($profile['status'] ?? null) === 'private_profile') {
-            $result['ok'] = true;
-            $result['fetched_activities'] = 0;
-            $result['inserted_activities'] = 0;
-            $result['xp_snapshot_inserted'] = false;
-            $result['status'] = 'private_profile';
-            return $result;
-        }
+if (($profile['status'] ?? null) === 'private_profile') {
+    rm_db_mark_member_private($pdo, (int)$member['id']);
+
+    $result['ok'] = true;
+    $result['fetched_activities'] = 0;
+    $result['inserted_activities'] = 0;
+    $result['xp_snapshot_inserted'] = false;
+    $result['status'] = 'private_profile';
+    return $result;
+}
+
+// If they were previously private and are now public again, clear the flags.
+rm_db_clear_member_private($pdo, (int)$member['id']);
+
 
 
         // Activities
@@ -361,6 +367,40 @@ function rm_db_get_member(PDO $pdo, int $memberId): ?array
     $stmt->execute([':id' => $memberId]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
+}
+
+
+function rm_db_mark_member_private(PDO $pdo, int $memberId): void
+{
+    try {
+        $st = $pdo->prepare("
+            UPDATE members
+            SET
+                is_private = 1,
+                private_since_utc = IF(is_private = 0 OR private_since_utc IS NULL, UTC_TIMESTAMP(3), private_since_utc)
+            WHERE id = :id
+        ");
+        $st->execute([':id' => $memberId]);
+    } catch (Throwable $e) {
+        // Schema might not be migrated yet; ignore safely.
+    }
+}
+
+function rm_db_clear_member_private(PDO $pdo, int $memberId): void
+{
+    try {
+        $st = $pdo->prepare("
+            UPDATE members
+            SET
+                is_private = 0,
+                private_since_utc = NULL
+            WHERE id = :id
+              AND is_private = 1
+        ");
+        $st->execute([':id' => $memberId]);
+    } catch (Throwable $e) {
+        // Schema might not be migrated yet; ignore safely.
+    }
 }
 
 function rm_db_find_member_by_rsn(PDO $pdo, int $clanId, string $rsn): ?array
