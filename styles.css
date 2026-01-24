@@ -369,6 +369,11 @@ code {
   color: var(--text);
 }
 
+.pill.private {
+  border-color: rgba(255, 120, 180, 0.45);
+  background: rgba(255, 120, 180, 0.12);
+}
+
 
 /* Skill tier borders */
 .skillCard.gold { border-color: var(--gold); }

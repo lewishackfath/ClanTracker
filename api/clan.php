@@ -242,6 +242,8 @@ $stmt = $pdo->prepare("
 SELECT
   m.rsn,
   m.rank_name,
+  m.is_private,
+  m.private_since_utc,
   (mc.id IS NOT NULL) AS capped,
   (mv.id IS NOT NULL) AS visited
 FROM members m
@@ -465,12 +467,19 @@ tracker_json([
         'uncapped' => $uncapped,
         'percent_capped' => $percent,
     ],
-    'members' => array_map(static function(array $m) {
+    'members' => array_map(function(array $m) use ($week) {
+        $isPrivate = ((int)($m['is_private'] ?? 0) === 1);
+        $sinceUtc = $m['private_since_utc'] ?? null;
+        $sinceLocal = $sinceUtc ? tracker_to_local((string)$sinceUtc, (string)$week['timezone']) : null;
+
         return [
             'rsn' => $m['rsn'],
             'rank_name' => $m['rank_name'],
             'capped' => ((int)$m['capped'] === 1),
             'visited' => ((int)($m['visited'] ?? 0) === 1),
+            'is_private' => $isPrivate,
+            'private_since_utc' => $sinceUtc,
+            'private_since_local' => $sinceLocal,
         ];
     }, $members),
     'ranks' => $ranks,

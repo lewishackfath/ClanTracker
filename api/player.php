@@ -248,6 +248,8 @@ try {
           m.rsn_normalised,
           m.rank_name,
           m.is_active,
+          m.is_private,
+          m.private_since_utc,
           m.updated_at,
           c.name AS clan_name,
           c.timezone,
@@ -473,6 +475,11 @@ try {
     $lastPullUtc = tracker_dtmax([$lastPolledUtc, $latestSnapUtc, $latestActivityUtc]);
     $lastPullLocal = tracker_to_local($lastPullUtc, (string)$week['timezone']);
 
+    // Private profile flags
+    $isPrivate = ((int)($member['is_private'] ?? 0) === 1);
+    $privateSinceUtc = $member['private_since_utc'] ?? null;
+    $privateSinceLocal = $privateSinceUtc ? tracker_to_local((string)$privateSinceUtc, (string)$week['timezone']) : null;
+
     tracker_json([
         'ok' => true,
         'member' => [
@@ -481,6 +488,9 @@ try {
             'rsn_normalised' => $member['rsn_normalised'],
             'rank_name' => $member['rank_name'],
             'is_active' => (int)$member['is_active'] === 1,
+            'is_private' => $isPrivate,
+            'private_since_utc' => $privateSinceUtc,
+            'private_since_local' => $privateSinceLocal,
         ],
         'clan' => [
             'id' => $clanId,

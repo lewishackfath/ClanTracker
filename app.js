@@ -616,8 +616,16 @@ function renderMemberList() {
     const isCapped = !!(m?.capped ?? m?.has_capped ?? m?.is_capped ?? false);
     const isVisited = !!(m?.visited ?? m?.has_visited ?? m?.is_visited ?? m?.visited_this_week ?? false);
     const badge = isCapped ? "Capped" : (isVisited ? "Visited" : "Uncapped");
+
     const metaVal = (m.rank_name ?? m.rank ?? "");
-    const meta = metaVal ? escapeHtml(metaVal) : "—";
+    let metaHtml = metaVal ? escapeHtml(metaVal) : "—";
+
+    const isPrivate = !!(m?.is_private ?? m?.private ?? false);
+    const sinceLocal = (m?.private_since_local || "").trim();
+    if (isPrivate) {
+      const since = sinceLocal ? ` since ${escapeHtml(sinceLocal)}` : "";
+      metaHtml += ` • <span class="pill private" title="Profile is private">Private${since}</span>`;
+    }
     return `
       <div class="memberCard clickable" data-rsn="${escapeHtml(m.rsn)}" title="Open player">
         <div class="memberLeft">
@@ -625,7 +633,7 @@ function renderMemberList() {
             <img class="memberAvatar" src="${getCachedAvatarUrl(m.rsn)}" alt="" onerror="this.remove()" />
             <div class="memberName">${escapeHtml(m.rsn)}</div>
           </div>
-          <div class="memberMeta">${meta}</div>
+          <div class="memberMeta">${metaHtml}</div>
         </div>
         <div class="badge">${badge}</div>
       </div>
@@ -854,7 +862,21 @@ function renderPlayer() {
 
   const status = (m?.is_active ? "Active" : "Inactive");
   const rank = m?.rank_name ? m.rank_name : "—";
-  qs("playerMeta").textContent = `Clan: ${c?.name || "—"} • Rank: ${rank} • Status: ${status}`;
+  {
+    const clanName = escapeHtml(c?.name || "—");
+    const rankHtml = escapeHtml(rank);
+    const statusHtml = escapeHtml(status);
+    let metaHtml = `Clan: ${clanName} • Rank: ${rankHtml} • Status: ${statusHtml}`;
+
+    const isPrivate = !!(m?.is_private ?? m?.private ?? false);
+    const sinceLocal = (m?.private_since_local || "").trim();
+    if (isPrivate) {
+      const since = sinceLocal ? ` since ${escapeHtml(sinceLocal)}` : "";
+      metaHtml += ` • <span class="pill private" title="Profile is private">Private${since}</span>`;
+    }
+
+    qs("playerMeta").innerHTML = metaHtml;
+  }
 
   qs("pCap").textContent = playerData.cap?.capped ? "Capped" : "Uncapped";
   qs("pVisit").textContent = playerData.visit?.visited ? "Visited" : "Not visited";
