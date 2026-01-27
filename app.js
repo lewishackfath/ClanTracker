@@ -476,7 +476,7 @@ function renderClanXpLeaders() {
 
     // Each tile is clickable and expands to show top 10 for that skill
     return `
-      <div class="leaderTile" data-skill="${escapeHtml(skill)}">
+      <div class="leaderTile" data-skill="${escapeHtml(skill)}" data-skillparam="${escapeHtml(key)}">
         <div class="leaderRow" role="button" aria-expanded="false">
           <img class="miniIcon" data-skill="${escapeHtml(skill)}" data-skillkey="${escapeHtml(key)}" alt="" />
           <div class="leaderSkill">${escapeHtml(skill)}</div>
@@ -504,6 +504,7 @@ function renderClanXpLeaders() {
     const row = tile.querySelector(".leaderRow");
     const expand = tile.querySelector(".leaderExpand");
     const skill = tile.getAttribute("data-skill") || "";
+    const skillParam = tile.getAttribute("data-skillparam") || skill;
 
     row.addEventListener("click", async () => {
       // Close others
@@ -525,7 +526,7 @@ function renderClanXpLeaders() {
 
       expand.innerHTML = `<div class="muted">Loading top earners…</div>`;
       try {
-        const list = await fetchClanTopEarnersForSkill(skill);
+        const list = await fetchClanTopEarnersForSkill(skillParam);
         if (!list || !list.length) {
           expand.innerHTML = `<div class="muted">No XP gains recorded for ${escapeHtml(skill)} in this period.</div>`;
           expand.setAttribute("data-loaded", "1");

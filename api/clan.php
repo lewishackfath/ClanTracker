@@ -242,8 +242,6 @@ $stmt = $pdo->prepare("
 SELECT
   m.rsn,
   m.rank_name,
-  m.is_private,
-  m.private_since_utc,
   (mc.id IS NOT NULL) AS capped,
   (mv.id IS NOT NULL) AS visited
 FROM members m
@@ -310,6 +308,15 @@ foreach (tracker_skill_order() as $skill) {
     ];
 }
 
+
+// Add Total XP leader (derived from skills_json totals or sum of skills)
+$leaders['Total'] = [
+    'skill' => 'Total',
+    'skill_key' => 'total',
+    'rsn' => null,
+    'gained_xp' => 0,
+    'has_data' => false,
+];
 // Grab one start and end snapshot per member for the selected period.
 // Snapshots can be infrequent, so we prefer:
 //   - start snapshot: latest snapshot at/before start (fallback to earliest after start)
@@ -365,7 +372,27 @@ try {
         $startSkills = tracker_extract_skill_xp(tracker_parse_skills_json($r['start_skills_json']));
         $endSkills   = tracker_extract_skill_xp(tracker_parse_skills_json($r['end_skills_json']));
 
-        foreach ($leaders as $skillName => $info) {
+        // Total XP gained for period (prefer total key if present, else sum all skills)
+        $startTotal = 0;
+        foreach ($startSkills as $k => $v) { if (strcasecmp((string)$k, 'total') === 0) continue; $startTotal += (int)$v; }
+        $endTotal = 0;
+        foreach ($endSkills as $k => $v) { if (strcasecmp((string)$k, 'total') === 0) continue; $endTotal += (int)$v; }
+        $gainTotal = $endTotal - $startTotal;
+        if ($gainTotal > 0) {
+            if ($gainTotal > (int)$leaders['Total']['gained_xp']) {
+                $leaders['Total']['gained_xp'] = $gainTotal;
+                $leaders['Total']['rsn'] = $rsn;
+                $leaders['Total']['has_data'] = true;
+            } elseif ($gainTotal === (int)$leaders['Total']['gained_xp']) {
+                $cur = (string)($leaders['Total']['rsn'] ?? '');
+                if ($cur === '' || strcasecmp($rsn, $cur) < 0) {
+                    $leaders['Total']['rsn'] = $rsn;
+                    $leaders['Total']['has_data'] = true;
+                }
+            }
+        }
+
+        foreach (tracker_skill_order() as $skillName) {
             $sx = $startSkills[$skillName] ?? null;
             $ex = $endSkills[$skillName] ?? null;
             if ($sx === null || $ex === null) continue;
@@ -389,7 +416,7 @@ try {
     // Non-fatal: if snapshots aren't available yet, just return empty leaders.
 }
 
-$leadersList = array_values($leaders);
+$leadersList = array_values(array_merge(['Total' => $leaders['Total']], array_diff_key($leaders, ['Total' => 1])));
 
 $skills = tracker_skill_order();
 
@@ -409,6 +436,16 @@ if ($requestedSkillRaw !== '') {
         }
     }
 
+    $isTotal = false;
+    if ($requestedSkill === null) {
+        $k = strtolower(preg_replace('/[^a-z0-9]+/i', '_', $requestedSkillRaw));
+        $k = trim($k, '_');
+        if (in_array($k, ['total', 'totalxp', 'total_xp', 'overall'], true)) {
+            $requestedSkill = 'Total';
+            $isTotal = true;
+        }
+    }
+
     if ($requestedSkill === null) {
         tracker_json(['ok' => false, 'error' => 'Unknown skill'], 400);
     }
@@ -419,12 +456,19 @@ if ($requestedSkillRaw !== '') {
         $startSkills = tracker_extract_skill_xp(tracker_parse_skills_json($r['start_skills_json']));
         $endSkills   = tracker_extract_skill_xp(tracker_parse_skills_json($r['end_skills_json']));
 
-        $sx = $startSkills[$requestedSkill] ?? null;
-        $ex = $endSkills[$requestedSkill] ?? null;
-        if ($sx === null || $ex === null) continue;
-
-        $gain = (int)$ex - (int)$sx;
-        if ($gain <= 0) continue;
+        if ($isTotal) {
+            $startTotal = 0;
+            foreach ($startSkills as $k => $v) { if (strcasecmp((string)$k, 'total') === 0) continue; $startTotal += (int)$v; }
+            $endTotal = 0;
+            foreach ($endSkills as $k => $v) { if (strcasecmp((string)$k, 'total') === 0) continue; $endTotal += (int)$v; }
+            $gain = $endTotal - $startTotal;
+        } else {
+            $sx = $startSkills[$requestedSkill] ?? null;
+            $ex = $endSkills[$requestedSkill] ?? null;
+            if ($sx === null || $ex === null) continue;
+            $gain = (int)$ex - (int)$sx;
+        }
+if ($gain <= 0) continue;
 
         $earners[] = ['rsn' => $rsn, 'gained_xp' => $gain];
     }
@@ -441,7 +485,7 @@ if ($requestedSkillRaw !== '') {
     tracker_json([
         'ok' => true,
         'skill' => $requestedSkill,
-        'skill_key' => tracker_skill_key($requestedSkill),
+        'skill_key' => ($isTotal ? 'total' : tracker_skill_key($requestedSkill)),
         'xp' => [
             'period' => $xpWindow['period'],
             'start_utc' => $xpWindow['start_utc'],
@@ -467,19 +511,12 @@ tracker_json([
         'uncapped' => $uncapped,
         'percent_capped' => $percent,
     ],
-    'members' => array_map(function(array $m) use ($week) {
-        $isPrivate = ((int)($m['is_private'] ?? 0) === 1);
-        $sinceUtc = $m['private_since_utc'] ?? null;
-        $sinceLocal = $sinceUtc ? tracker_to_local((string)$sinceUtc, (string)$week['timezone']) : null;
-
+    'members' => array_map(static function(array $m) {
         return [
             'rsn' => $m['rsn'],
             'rank_name' => $m['rank_name'],
             'capped' => ((int)$m['capped'] === 1),
             'visited' => ((int)($m['visited'] ?? 0) === 1),
-            'is_private' => $isPrivate,
-            'private_since_utc' => $sinceUtc,
-            'private_since_local' => $sinceLocal,
         ];
     }, $members),
     'ranks' => $ranks,
