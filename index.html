@@ -54,7 +54,21 @@
 
           <button id="btnPlayer" class="button" type="button">Open player</button>
           <p class="help">Opens: <code>/?player=RSN</code></p>
+        
+        <div class="panel">
+          <h2 class="h2">Grand Exchange</h2>
+          <label class="label" for="geQuery">Item</label>
+
+          <div class="typeahead">
+            <input id="geQuery" class="input" type="text" autocomplete="off"
+                   placeholder="Type to search items…" aria-expanded="false" aria-controls="geList" />
+            <div id="geList" class="dropdown hidden" role="listbox" aria-label="Item results"></div>
+          </div>
+
+          <button id="btnGe" class="button" type="button">Open GE search</button>
+          <p class="help">Opens: <code>/?ge=1</code> and <code>/?ge_item=ITEM_ID</code></p>
         </div>
+</div>
       </div>
 
       <div id="notice" class="notice" role="status" aria-live="polite"></div>
@@ -178,6 +192,48 @@
 
       <div class="muted" id="playerError" style="margin-top:10px;"></div>
       <div class="lastPull muted" id="playerLastPull"></div>
+    </section>
+
+    <!-- Grand Exchange search -->
+    <section class="card hidden" id="viewGeSearch">
+      <div class="row">
+        <div>
+          <h2 class="h2">Grand Exchange</h2>
+          <p class="muted">Search items and view official guide price history.</p>
+        </div>
+        <button class="button secondary" type="button" id="backFromGeSearch">Back</button>
+      </div>
+
+      <div class="panel" style="margin-top:14px;">
+        <label class="label" for="geSearchInput">Item search</label>
+        <div class="typeahead">
+          <input id="geSearchInput" class="input" type="text" autocomplete="off"
+                 placeholder="Start typing an item name…" aria-expanded="false" aria-controls="geSearchList" />
+          <div id="geSearchList" class="dropdown hidden" role="listbox" aria-label="Item results"></div>
+        </div>
+        <div class="muted" id="geSearchHint" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
+    <!-- Grand Exchange item -->
+    <section class="card hidden" id="viewGeItem">
+      <div class="row">
+        <div>
+          <h2 class="h2" id="geItemTitle">Item</h2>
+          <p class="muted" id="geItemSubtitle"></p>
+        </div>
+        <button class="button secondary" type="button" id="backFromGeItem">Back</button>
+      </div>
+
+      <div class="statsGrid" id="geItemStats" style="margin-top:14px;"></div>
+
+      <div class="panel" style="margin-top:14px;">
+        <h3 class="h2" style="margin-bottom:8px;">Price history (last ~180 days)</h3>
+        <div class="muted" id="geHistoryStatus"></div>
+        <div class="skillList" id="geHistoryList"></div>
+      </div>
+
+      <div class="muted" id="geItemError" style="margin-top:10px;"></div>
     </section>
   </main>
 

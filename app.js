@@ -6,6 +6,11 @@ const API = {
   clanOverview: "api/clan.php",
   player: "api/player.php",
   refreshPlayerXp: "api/refresh_member_data.php",
+
+  // Grand Exchange (official RS3 ItemDB proxy)
+  geSearch: "api/ge/search.php",
+  geItem: "api/ge/item.php",
+  geHistory: "api/ge/history.php",
 };
 
 /* ---------------- XP refresh helper ---------------- */
@@ -33,6 +38,8 @@ function getParams() {
   return {
     clan: (p.get("clan") || "").trim(),
     player: (p.get("player") || "").trim(),
+    ge: (p.get("ge") || "").trim(),
+    ge_item: (p.get("ge_item") || "").trim(),
   };
 }
 
@@ -40,6 +47,8 @@ function setQuery(params) {
   const url = new URL(window.location.href);
   url.searchParams.delete("clan");
   url.searchParams.delete("player");
+  url.searchParams.delete("ge");
+  url.searchParams.delete("ge_item");
   for (const [k, v] of Object.entries(params)) {
     if (v && String(v).trim()) url.searchParams.set(k, String(v).trim());
   }
@@ -51,6 +60,8 @@ function clearQuery() {
   const url = new URL(window.location.href);
   url.searchParams.delete("clan");
   url.searchParams.delete("player");
+  url.searchParams.delete("ge");
+  url.searchParams.delete("ge_item");
   window.history.pushState({}, "", url);
   render();
 }
@@ -1044,16 +1055,40 @@ async function loadPlayer(rsn, period) {
 
 /* ---------------- Render views ---------------- */
 function render() {
-  const { clan, player } = getParams();
+  const { clan, player, ge, ge_item } = getParams();
 
   const landing = qs("landingCard");
   const viewClan = qs("viewClan");
   const viewPlayer = qs("viewPlayer");
+  const viewGeSearch = qs("viewGeSearch");
+  const viewGeItem = qs("viewGeItem");
   const notice = qs("notice");
+
+  if (ge_item) {
+    show(landing, false);
+    show(viewClan, false);
+    show(viewPlayer, false);
+    show(viewGeSearch, false);
+    show(viewGeItem, true);
+    loadGeItem(ge_item);
+    return;
+  }
+
+  if (ge) {
+    show(landing, false);
+    show(viewClan, false);
+    show(viewPlayer, false);
+    show(viewGeItem, false);
+    show(viewGeSearch, true);
+    focusGeSearch();
+    return;
+  }
 
   if (player) {
     show(landing, false);
     show(viewClan, false);
+    show(viewGeSearch, false);
+    show(viewGeItem, false);
     show(viewPlayer, true);
     loadPlayer(player, selectedXpPeriod);
     return;
@@ -1062,6 +1097,8 @@ function render() {
   if (clan) {
     show(landing, false);
     show(viewPlayer, false);
+    show(viewGeSearch, false);
+    show(viewGeItem, false);
     show(viewClan, true);
     loadClanOverview(clan, selectedClanXpPeriod);
     return;
@@ -1069,14 +1106,17 @@ function render() {
 
   show(viewClan, false);
   show(viewPlayer, false);
+  show(viewGeSearch, false);
+  show(viewGeItem, false);
   show(landing, true);
+  notice.textContent = "Tip: start typing to search, or paste a link with ?clan=, ?player=, or ?ge_item=.";
   notice.textContent = "Tip: start typing to search, or paste a clan key / RSN.";
 }
 
 /* ---------------- Typeahead component + wiring ---------------- */
 /* (unchanged from your current file except the row class above) */
 
-function createTypeahead({ inputEl, listEl, minChars = 1, maxItems = 8, fetchItems, renderItem, onSelectValue }) {
+function createTypeahead({ inputEl, listEl, minChars = 1, maxItems = 8, fetchItems, renderItem, onSelectValue, onSelectItem }) {
   let items = [];
   let activeIndex = -1;
   let lastQueryKey = "";
@@ -1106,7 +1146,8 @@ function createTypeahead({ inputEl, listEl, minChars = 1, maxItems = 8, fetchIte
     const r = renderItem(item);
     inputEl.value = r.value;
     close();
-    onSelectValue(r.value);
+    if (typeof onSelectItem === "function") onSelectItem(item, r);
+    else onSelectValue(r.value);
   }
 
   async function update(queryRaw) {
@@ -1179,6 +1220,126 @@ async function searchPlayers(q) {
   return Array.isArray(data) ? data : [];
 }
 
+
+async function searchGeItems(q) {
+  const data = await fetchJson(`${API.geSearch}?q=${encodeURIComponent(q)}&limit=10`);
+  // Our GE API returns: { ok:true, items:[...] }
+  if (data && data.ok && Array.isArray(data.items)) return data.items;
+  return [];
+}
+
+function formatGp(n) {
+  const x = Number(n);
+  if (!isFinite(x)) return "—";
+  if (x >= 1_000_000_000) return (x / 1_000_000_000).toFixed(2).replace(/\.00$/, "") + "b";
+  if (x >= 1_000_000) return (x / 1_000_000).toFixed(2).replace(/\.00$/, "") + "m";
+  if (x >= 1_000) return (x / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
+  return String(Math.round(x));
+}
+
+function focusGeSearch() {
+  // Prefer the dedicated GE search page input if present; otherwise the landing input.
+  const el = qs("geSearchInput") || qs("geQuery");
+  if (el) setTimeout(() => el.focus(), 0);
+}
+
+async function loadGeItem(itemIdRaw) {
+  const itemId = String(itemIdRaw || "").trim();
+  const titleEl = qs("geItemTitle");
+  const subEl = qs("geItemSubtitle");
+  const statsEl = qs("geItemStats");
+  const histStatus = qs("geHistoryStatus");
+  const histList = qs("geHistoryList");
+  const errEl = qs("geItemError");
+
+  if (errEl) errEl.textContent = "";
+  if (titleEl) titleEl.textContent = "Loading…";
+  if (subEl) subEl.textContent = "";
+  if (statsEl) statsEl.innerHTML = "";
+  if (histStatus) histStatus.textContent = "Loading history…";
+  if (histList) histList.innerHTML = "";
+
+  const detail = await fetchJson(`${API.geItem}?item_id=${encodeURIComponent(itemId)}`);
+  if (!detail || !detail.ok) {
+    if (errEl) errEl.textContent = detail?.error ? `GE error: ${detail.error}` : "GE error: failed to load item.";
+    if (histStatus) histStatus.textContent = "";
+    return;
+  }
+
+  const item = detail.detail?.item || detail.item || detail.detail?.item; // tolerate shapes
+  const name = item?.name || `Item ${itemId}`;
+  const desc = item?.description || item?.examine || "";
+  const current = item?.current?.price ?? item?.current?.value ?? null;
+
+  if (titleEl) titleEl.textContent = name;
+  if (subEl) subEl.textContent = desc ? desc : (current ? `Guide price: ${current}` : "");
+
+  // Trend blocks (today/30/90/180 if present)
+  const blocks = [];
+  const cur = item?.current?.price ?? item?.current ?? null;
+  if (item?.current?.price) {
+    blocks.push(["Guide price", item.current.price]);
+  } else if (typeof item?.current === "string") {
+    blocks.push(["Guide price", item.current]);
+  }
+
+  const trendKeys = ["today", "day30", "day90", "day180"];
+  for (const k of trendKeys) {
+    const t = item?.[k];
+    if (t && typeof t === "object") {
+      const price = t.price ?? "";
+      const trend = t.trend ?? "";
+      const label = k === "day30" ? "30 days" : k === "day90" ? "90 days" : k === "day180" ? "180 days" : "Today";
+      blocks.push([label, `${trend}${price ? ` (${price})` : ""}`.trim()]);
+    }
+  }
+
+  if (statsEl && blocks.length) {
+    statsEl.innerHTML = blocks.map(([label, value]) => `
+      <div class="statCard">
+        <div class="statLabel">${escapeHtml(label)}</div>
+        <div class="statValue">${escapeHtml(String(value))}</div>
+      </div>
+    `).join("");
+  }
+
+  // History
+  const hist = await fetchJson(`${API.geHistory}?item_id=${encodeURIComponent(itemId)}`);
+  if (!hist || !hist.ok) {
+    if (histStatus) histStatus.textContent = "";
+    if (errEl) errEl.textContent = hist?.error ? `GE error: ${hist.error}` : "GE error: failed to load history.";
+    return;
+  }
+
+  const daily = hist.graph?.daily || {};
+  const entries = Object.entries(daily)
+    .map(([ts, price]) => [Number(ts), Number(price)])
+    .filter(([ts, price]) => isFinite(ts) && isFinite(price))
+    .sort((a, b) => a[0] - b[0]);
+
+  if (!entries.length) {
+    if (histStatus) histStatus.textContent = "No history available.";
+    return;
+  }
+
+  // Render last 14 points as a simple list (keeps it lightweight)
+  const last = entries.slice(-14);
+  if (histStatus) histStatus.textContent = `Showing latest ${last.length} daily points (of ${entries.length}).`;
+
+  if (histList) {
+    histList.innerHTML = last.map(([ts, price]) => {
+      const d = new Date(ts);
+      const label = isFinite(d.getTime()) ? d.toLocaleDateString("en-AU", { year: "numeric", month: "short", day: "2-digit" }) : String(ts);
+      return `
+        <div class="skillRow">
+          <div class="skillName">${escapeHtml(label)}</div>
+          <div class="skillVal">${escapeHtml(formatGp(price))} gp</div>
+        </div>
+      `;
+    }).join("");
+  }
+}
+
 function wireUI() {
   const clanKey = qs("clanKey");
   const playerRsn = qs("playerRsn");
@@ -1209,6 +1370,45 @@ function wireUI() {
     onSelectValue: (value) => setQuery({ player: value }),
   });
 
+  // Grand Exchange (landing + dedicated page)
+  const geQuery = qs("geQuery");
+  if (geQuery) {
+    createTypeahead({
+      inputEl: geQuery,
+      listEl: qs("geList"),
+      minChars: 2,
+      maxItems: 10,
+      fetchItems: searchGeItems,
+      renderItem: (it) => ({
+        primary: it.name,
+        secondary: `Item ID: ${it.item_id}`,
+        badge: "",
+        value: it.name || "",
+      }),
+      onSelectValue: () => {}, // unused
+      onSelectItem: (it) => setQuery({ ge_item: it.item_id }),
+    });
+  }
+
+  const geSearchInput = qs("geSearchInput");
+  if (geSearchInput) {
+    createTypeahead({
+      inputEl: geSearchInput,
+      listEl: qs("geSearchList"),
+      minChars: 2,
+      maxItems: 12,
+      fetchItems: searchGeItems,
+      renderItem: (it) => ({
+        primary: it.name,
+        secondary: `Item ID: ${it.item_id}`,
+        badge: "",
+        value: it.name || "",
+      }),
+      onSelectValue: () => {},
+      onSelectItem: (it) => setQuery({ ge_item: it.item_id }),
+    });
+  }
+
   qs("btnClan").addEventListener("click", () => {
     const v = normalise(clanKey.value);
     if (!v) return qs("notice").textContent = "Please enter a clan key.";
@@ -1219,6 +1419,12 @@ function wireUI() {
     const v = normalise(playerRsn.value);
     if (!v) return qs("notice").textContent = "Please enter a player RSN.";
     setQuery({ player: v });
+
+  const btnGe = qs("btnGe");
+  if (btnGe) {
+    btnGe.addEventListener("click", () => setQuery({ ge: "1" }));
+  }
+
   });
 
   qs("backFromClan").addEventListener("click", clearQuery);
@@ -1235,6 +1441,10 @@ function wireUI() {
       const { clan } = getParams();
       if (clan) loadClanOverview(clan, selectedClanXpPeriod);
     });
+
+  qs("backFromGeSearch")?.addEventListener("click", () => clearQuery());
+  qs("backFromGeItem")?.addEventListener("click", () => setQuery({ ge: "1" }));
+
   }
 
 qs("xpPeriod").addEventListener("change", () => {
