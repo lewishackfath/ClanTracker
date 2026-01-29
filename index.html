@@ -219,7 +219,13 @@
     <section class="card hidden" id="viewGeItem">
       <div class="row">
         <div>
-          <h2 class="h2" id="geItemTitle">Item</h2>
+          <div style="display:flex; gap:12px; align-items:center;">
+            <img id="geItemIcon" alt="" style="width:48px; height:48px; image-rendering:auto;" />
+            <div>
+              <h2 class="h2" id="geItemTitle">Item</h2>
+              
+            </div>
+          </div>
           <p class="muted" id="geItemSubtitle"></p>
         </div>
         <button class="button secondary" type="button" id="backFromGeItem">Back</button>
@@ -228,6 +234,12 @@
       <div class="statsGrid" id="geItemStats" style="margin-top:14px;"></div>
 
       <div class="panel" style="margin-top:14px;">
+        <h3 class="h2" style="margin-bottom:8px;">Price history chart</h3>
+        <canvas id="geChart" height="260" style="width:100%; display:block;"></canvas>
+        <div class="muted" id="geChartMeta" style="margin-top:8px;"></div>
+      </div>
+
+<div class="panel" style="margin-top:14px;">
         <h3 class="h2" style="margin-bottom:8px;">Price history (last ~180 days)</h3>
         <div class="muted" id="geHistoryStatus"></div>
         <div class="skillList" id="geHistoryList"></div>

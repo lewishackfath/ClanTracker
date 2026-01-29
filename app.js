@@ -1237,6 +1237,124 @@ function formatGp(n) {
   return String(Math.round(x));
 }
 
+
+/* ---------------- GE chart (canvas, no deps) ---------------- */
+
+function renderGeChart(graph) {
+  const canvas = qs("geChart");
+  const meta = qs("geChartMeta");
+  if (!canvas || !graph) return;
+
+  const dailyObj = graph.daily || {};
+  const avgObj = graph.average || {};
+
+  const tsSet = new Set([].concat(Object.keys(dailyObj), Object.keys(avgObj)));
+  const ts = Array.from(tsSet).map(n => Number(n)).filter(n => Number.isFinite(n)).sort((a,b)=>a-b);
+
+  if (!ts.length) {
+    if (meta) meta.textContent = "No chart data available.";
+    const ctx0 = canvas.getContext("2d");
+    if (ctx0) ctx0.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+
+  const daily = ts.map(t => [t, dailyObj[String(t)] ?? null])
+    .filter(p => p[1] !== null)
+    .map(([t,y]) => [t, Number(y)])
+    .filter(([,y]) => Number.isFinite(y));
+
+  const avg = ts.map(t => [t, avgObj[String(t)] ?? null])
+    .filter(p => p[1] !== null)
+    .map(([t,y]) => [t, Number(y)])
+    .filter(([,y]) => Number.isFinite(y));
+
+  const seriesForBounds = daily.length ? daily : avg;
+  if (!seriesForBounds.length) {
+    if (meta) meta.textContent = "No chart data available.";
+    return;
+  }
+
+  const cssW = canvas.clientWidth || (canvas.parentElement ? canvas.parentElement.clientWidth : 900);
+  const cssH = Number(canvas.getAttribute("height") || 260);
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 56, padR = 14, padT = 14, padB = 26;
+  const w = cssW - padL - padR;
+  const h = cssH - padT - padB;
+
+  const minX = seriesForBounds[0][0];
+  const maxX = seriesForBounds[seriesForBounds.length - 1][0];
+
+  let minY = Infinity, maxY = -Infinity;
+  for (const [,y] of seriesForBounds) { minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+  if (minY === maxY) { minY *= 0.9; maxY *= 1.1; }
+
+  const xPx = (t) => padL + ((t - minX) / (maxX - minX || 1)) * w;
+  const yPx = (y) => padT + (1 - ((y - minY) / (maxY - minY || 1))) * h;
+
+  // Grid
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+
+  const yTicks = 4;
+  for (let i=0;i<=yTicks;i++){
+    const t = i / yTicks;
+    const y = padT + t*h;
+    const yVal = minY + (1 - t) * (maxY - minY);
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + w, y);
+    ctx.stroke();
+    ctx.fillText(formatGp(yVal) + " gp", 8, y + 4);
+  }
+
+  const fmtDate = (ms) => {
+    const d = new Date(ms);
+    return d.toLocaleDateString("en-AU", { day: "2-digit", month: "short" });
+  };
+
+  ctx.fillText(fmtDate(minX), padL, padT + h + 18);
+  const endLbl = fmtDate(maxX);
+  const endW = ctx.measureText(endLbl).width;
+  ctx.fillText(endLbl, padL + w - endW, padT + h + 18);
+
+  function drawLine(points, stroke) {
+    if (!points || !points.length) return;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let first = true;
+    for (const [t,y] of points) {
+      const x = xPx(t);
+      const py = yPx(y);
+      if (first) { ctx.moveTo(x, py); first = false; }
+      else ctx.lineTo(x, py);
+    }
+    ctx.stroke();
+  }
+
+  // Average then daily so daily sits on top
+  drawLine(avg, "rgba(120,200,255,0.9)");
+  drawLine(daily, "rgba(255,220,120,0.9)");
+
+  const first = seriesForBounds[0][1];
+  const last = seriesForBounds[seriesForBounds.length - 1][1];
+  const change = last - first;
+  const pct = first ? (change / first) * 100 : 0;
+  if (meta) meta.textContent = `Latest: ${formatGp(last)} gp • Change: ${formatGp(change)} gp (${pct.toFixed(1)}%) • Daily (gold) / Average (blue)`;
+}
+
 function focusGeSearch() {
   // Prefer the dedicated GE search page input if present; otherwise the landing input.
   const el = qs("geSearchInput") || qs("geQuery");
@@ -1247,6 +1365,7 @@ async function loadGeItem(itemIdRaw) {
   const itemId = String(itemIdRaw || "").trim();
   const titleEl = qs("geItemTitle");
   const subEl = qs("geItemSubtitle");
+  const iconEl = qs("geItemIcon");
   const statsEl = qs("geItemStats");
   const histStatus = qs("geHistoryStatus");
   const histList = qs("geHistoryList");
@@ -1255,6 +1374,7 @@ async function loadGeItem(itemIdRaw) {
   if (errEl) errEl.textContent = "";
   if (titleEl) titleEl.textContent = "Loading…";
   if (subEl) subEl.textContent = "";
+  if (iconEl) { iconEl.removeAttribute("src"); iconEl.style.display = "none"; iconEl.alt = ""; }
   if (statsEl) statsEl.innerHTML = "";
   if (histStatus) histStatus.textContent = "Loading history…";
   if (histList) histList.innerHTML = "";
@@ -1273,6 +1393,14 @@ async function loadGeItem(itemIdRaw) {
 
   if (titleEl) titleEl.textContent = name;
   if (subEl) subEl.textContent = desc ? desc : (current ? `Guide price: ${current}` : "");
+
+  // Item icon
+  const iconUrl = item?.icon_large || item?.icon || item?.iconLarge || item?.iconLargeUrl || item?.icon_url || item?.icon_large_url || null;
+  if (iconEl && iconUrl) {
+    iconEl.src = String(iconUrl);
+    iconEl.alt = name;
+    iconEl.style.display = "";
+  }
 
   // Trend blocks (today/30/90/180 if present)
   const blocks = [];
@@ -1316,6 +1444,9 @@ async function loadGeItem(itemIdRaw) {
     .map(([ts, price]) => [Number(ts), Number(price)])
     .filter(([ts, price]) => isFinite(ts) && isFinite(price))
     .sort((a, b) => a[0] - b[0]);
+
+  // Draw chart (if present on page)
+  try { renderGeChart(hist.graph); } catch (e) { /* ignore */ }
 
   if (!entries.length) {
     if (histStatus) histStatus.textContent = "No history available.";
