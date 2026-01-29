@@ -1454,8 +1454,8 @@ async function loadGeItem(itemIdRaw) {
   }
 
   // Render last 14 points as a simple list (keeps it lightweight)
-  const last = entries.slice(-14);
-  if (histStatus) histStatus.textContent = `Showing latest ${last.length} daily points (of ${entries.length}).`;
+  const last = entries.slice(-14).reverse(); // newest -> oldest for display
+  if (histStatus) histStatus.textContent = `Showing latest ${last.length} daily points (newest first, of ${entries.length}).`;
 
   if (histList) {
     histList.innerHTML = last.map(([ts, price]) => {

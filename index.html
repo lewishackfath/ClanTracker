@@ -39,7 +39,6 @@
           </div>
 
           <button id="btnClan" class="button" type="button">Open clan</button>
-          <p class="help">Opens: <code>/?clan=YOURKEY</code></p>
         </div>
 
         <div class="panel">
@@ -53,8 +52,22 @@
           </div>
 
           <button id="btnPlayer" class="button" type="button">Open player</button>
-          <p class="help">Opens: <code>/?player=RSN</code></p>
         
+
+        </div>
+          <button id="btnGe" class="button" type="button">Open GE search</button>
+        </div>
+</div>
+      </div>
+
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+    </section>
+
+    <!-- Grand Exchange (home) -->
+    <section class="card" id="geHomeCard">
+      <h2 class="h2">Grand Exchange</h2>
+      <p class="muted">Search items and view official guide price history.</p>
+      <div class="grid">
         <div class="panel">
           <h2 class="h2">Grand Exchange</h2>
           <label class="label" for="geQuery">Item</label>
@@ -64,15 +77,9 @@
                    placeholder="Type to search items…" aria-expanded="false" aria-controls="geList" />
             <div id="geList" class="dropdown hidden" role="listbox" aria-label="Item results"></div>
           </div>
-
-          <button id="btnGe" class="button" type="button">Open GE search</button>
-          <p class="help">Opens: <code>/?ge=1</code> and <code>/?ge_item=ITEM_ID</code></p>
-        </div>
-</div>
       </div>
-
-      <div id="notice" class="notice" role="status" aria-live="polite"></div>
     </section>
+
 
     <!-- Clan view -->
     <section class="card hidden" id="viewClan">
