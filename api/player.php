@@ -309,8 +309,9 @@ try {
         SELECT activity_date_utc, activity_text, activity_details, announced_at
         FROM member_activities
         WHERE member_id = :mid
+          AND activity_text <> 'Rank-up required'
         ORDER BY COALESCE(activity_date_utc, announced_at) DESC
-        LIMIT 20
+        LIMIT 20;
     ");
     $stmt->execute([':mid' => $memberId]);
     $activityRows = $stmt->fetchAll() ?: [];

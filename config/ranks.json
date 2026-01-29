@@ -1,0 +1,14 @@
+{
+  "order": [
+    "Recruit",
+    "Corporal",
+    "Sergeant",
+    "Lieutenant",
+    "Captain",
+    "General",
+    "Coordinator",
+    "Overseer",
+    "Deputy Owner",
+    "Owner"
+  ]
+}

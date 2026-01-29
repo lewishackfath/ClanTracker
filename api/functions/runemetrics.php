@@ -22,6 +22,37 @@ declare(strict_types=1);
 date_default_timezone_set('UTC');
 
 require_once __DIR__ . '/activity_helpers.php';
+require_once __DIR__ . '/rank_up_detection.php';
+
+/**
+ * Load rank order from a JSON file.
+ * Expected formats:
+ *  - {"order": ["Recruit", ...]}
+ *  - ["Recruit", ...]
+ */
+function rm_load_rank_order_from_json_file(string $path): array
+{
+    if (!is_file($path) || !is_readable($path)) {
+        return [];
+    }
+    $raw = file_get_contents($path);
+    if ($raw === false) {
+        return [];
+    }
+    $decoded = json_decode($raw, true);
+    if (is_array($decoded) && array_key_exists('order', $decoded) && is_array($decoded['order'])) {
+        return array_values(array_filter(array_map('strval', $decoded['order'])));
+    }
+    if (is_array($decoded)) {
+        // If the JSON is a simple array, treat it as the rank order.
+        // Make sure it isn't an associative array.
+        $isAssoc = array_keys($decoded) !== range(0, count($decoded) - 1);
+        if (!$isAssoc) {
+            return array_values(array_filter(array_map('strval', $decoded)));
+        }
+    }
+    return [];
+}
 
 /* ============================================================
    Public entry points
@@ -57,6 +88,7 @@ function runemetrics_sync_member(PDO $pdo, int $memberId, int $activities = 20):
     ];
 
     $capDetected = false;
+    $capWeekStartUtc = null;
 
     try {
         $member = rm_db_get_member($pdo, $memberId);
@@ -97,8 +129,111 @@ rm_db_clear_member_private($pdo, (int)$member['id']);
                 (int)$member['id'],
                 (int)$member['clan_id'],
                 $acts,
-                $capDetected
+                $capDetected,
+                $capWeekStartUtc
             );
+        }
+
+
+        
+        // Rank-up detection:
+        // We run this when:
+        // 1) A cap activity was detected in THIS sync, OR
+        // 2) The member is already marked as capped for the CURRENT cap week (even if the cap activity isn't in the last N RuneMetrics activities).
+        //
+        // A synthetic marker activity prevents duplicates per cap week, so this is safe to run repeatedly.
+        if (function_exists('detect_and_notify_rank_up')) {
+            try {
+                $clanFull = rm_db_load_clan_reset($pdo, (int)$member['clan_id']); // includes discord + rank settings
+                if ($clanFull) {
+                    // Resolve rank order
+                    $rankOrder = [];
+                    if (!empty($clanFull['rank_order_json'])) {
+                        $decoded = json_decode((string)$clanFull['rank_order_json'], true);
+                        if (is_array($decoded)) $rankOrder = array_values(array_map('strval', $decoded));
+                    } elseif (!empty($clanFull['rank_order'])) {
+                        $rankOrder = array_values(array_filter(array_map('trim', explode(',', (string)$clanFull['rank_order']))));
+                    }
+
+                    // Fallback: load rank order from JSON file (tracker-side config)
+                    if (!$rankOrder) {
+                        // Prefer ../config/ranks.json (when this file lives in /functions)
+                        $rankOrder = rm_load_rank_order_from_json_file(__DIR__ . '/../config/ranks.json');
+                    }
+                    if (!$rankOrder) {
+                        // Secondary fallback: ranks.json next to this file
+                        $rankOrder = rm_load_rank_order_from_json_file(__DIR__ . '/ranks.json');
+                    }
+
+                    if ($rankOrder) {
+                        // Determine the CURRENT cap week to evaluate (prevents historical back-pings)
+                        [$currentStartUtc, $currentEndUtc] = ah_cap_week_bounds_utc(
+                            new DateTimeImmutable('now', new DateTimeZone('UTC')),
+                            (string)$clanFull['timezone'],
+                            (int)$clanFull['reset_weekday'],
+                            (string)$clanFull['reset_time']
+                        );
+
+                        $capWeekStart = $currentStartUtc->format('Y-m-d H:i:s.v');
+                        $startUtc = $currentStartUtc;
+                        $endUtc   = $currentEndUtc;
+
+                        // Did we detect a cap activity THIS sync, and is it in the current cap week?
+                        $cappedThisWeek = false;
+                        if ($capDetected && is_string($capWeekStartUtc) && $capWeekStartUtc !== '') {
+                            [$capStartUtc, $capEndUtc] = ah_cap_week_bounds_utc(
+                                new DateTimeImmutable($capWeekStartUtc, new DateTimeZone('UTC')),
+                                (string)$clanFull['timezone'],
+                                (int)$clanFull['reset_weekday'],
+                                (string)$clanFull['reset_time']
+                            );
+                            // Only treat it as a qualifying cap if that activity belongs to the current week.
+                            $cappedThisWeek = ($capStartUtc->format('Y-m-d H:i:s.v') === $currentStartUtc->format('Y-m-d H:i:s.v'));
+                        }
+
+                        // If we didn't see the cap activity (or it was from a previous week), check the caps table for the CURRENT week.
+                        if (!$cappedThisWeek && $startUtc && $endUtc) {
+                            $st = $pdo->prepare("
+                                SELECT 1
+                                FROM member_caps
+                                WHERE clan_id = :clan_id
+                                  AND member_id = :member_id
+                                  AND capped_at_utc >= :start_utc
+                                  AND capped_at_utc < :end_utc
+                                LIMIT 1
+                            ");
+                            $st->execute([
+                                ':clan_id' => (int)$member['clan_id'],
+                                ':member_id' => (int)$member['id'],
+                                ':start_utc' => $startUtc->format('Y-m-d H:i:s.v'),
+                                ':end_utc' => $endUtc->format('Y-m-d H:i:s.v'),
+                            ]);
+                            $cappedThisWeek = (bool)$st->fetchColumn();
+                        }
+
+                        if ($cappedThisWeek) {
+                            // Resolve bot token (optional — we still insert the synthetic marker even if token/channel are missing)
+                            $botToken = '';
+                            if (isset($GLOBALS['config']) && is_array($GLOBALS['config'])) {
+                                $botToken = (string)($GLOBALS['config']['discord_bot_token']
+                                    ?? $GLOBALS['config']['bot_token']
+                                    ?? $GLOBALS['config']['discord_token']
+                                    ?? '');
+                            }
+                            if ($botToken === '' && defined('DISCORD_BOT_TOKEN')) {
+                                $botToken = (string)DISCORD_BOT_TOKEN;
+                            }
+                            if ($botToken === '') {
+                                $botToken = (string)getenv('DISCORD_BOT_TOKEN');
+                            }
+
+                            detect_and_notify_rank_up($pdo, $clanFull, $member, $capWeekStart, $rankOrder, $botToken);
+                        }
+                    }
+                }
+            } catch (Throwable $e) {
+                // Never block sync on rank-up detection; swallow errors.
+            }
         }
 
         // XP snapshot (divide XP by 10)
@@ -359,7 +494,7 @@ function rm_trim(string $s, int $maxLen): string
 function rm_db_get_member(PDO $pdo, int $memberId): ?array
 {
     $stmt = $pdo->prepare("
-        SELECT id, clan_id, rsn, rsn_normalised
+        SELECT id, clan_id, rsn, rsn_normalised, rank_name
         FROM members
         WHERE id = :id
         LIMIT 1
@@ -406,7 +541,7 @@ function rm_db_clear_member_private(PDO $pdo, int $memberId): void
 function rm_db_find_member_by_rsn(PDO $pdo, int $clanId, string $rsn): ?array
 {
     $stmt = $pdo->prepare("
-        SELECT id, clan_id, rsn, rsn_normalised
+        SELECT id, clan_id, rsn, rsn_normalised, rank_name
         FROM members
         WHERE clan_id = :clan_id AND rsn = :rsn
         LIMIT 1
@@ -418,7 +553,7 @@ function rm_db_find_member_by_rsn(PDO $pdo, int $clanId, string $rsn): ?array
 
 function rm_db_load_clan_reset(PDO $pdo, int $clanId): ?array
 {
-    $st = $pdo->prepare("SELECT id, timezone, reset_weekday, reset_time FROM clans WHERE id = :id LIMIT 1");
+    $st = $pdo->prepare("SELECT * FROM clans WHERE id = :id LIMIT 1");
     $st->execute([':id' => $clanId]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
@@ -431,11 +566,13 @@ function rm_db_load_clan_reset(PDO $pdo, int $clanId): ?array
  *
  * @return int inserted count
  */
-function rm_db_insert_activities_with_processing(PDO $pdo, int $memberId, int $clanId, array $activities, bool &$capDetected): int
+function rm_db_insert_activities_with_processing(PDO $pdo, int $memberId, int $clanId, array $activities, bool &$capDetected, ?string &$capWeekStartUtc = null): int
 {
     $inserted = 0;
     // set by reference for the caller
     $capDetected = false;
+    $capWeekStartUtc = null;
+    $capWeekStartUtc = null;
 
     $clan = rm_db_load_clan_reset($pdo, $clanId);
     if (!$clan) {
@@ -525,6 +662,7 @@ function rm_db_insert_activities_with_processing(PDO $pdo, int $memberId, int $c
                     if ($purpose === 'cap_detection') {
                         $stCap->execute($payload);
                         $capDetected = true;
+                        $capWeekStartUtc = $startUtc->format('Y-m-d H:i:s.v');
                     } else {
                         $stVisit->execute($payload);
                     }
