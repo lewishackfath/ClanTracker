@@ -592,3 +592,8 @@ body::before {
   font-size: 18px;
   color: rgba(255, 215, 0, 0.95);
 }
+
+
+/* --- Grand Exchange home card layout --- */
+#geHomeCard{width:100%;grid-column:1 / -1;}
+#geHomeCard .grid{grid-template-columns:1fr;}

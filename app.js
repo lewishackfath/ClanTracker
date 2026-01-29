@@ -1058,7 +1058,8 @@ function render() {
   const { clan, player, ge, ge_item } = getParams();
 
   const landing = qs("landingCard");
-  const viewClan = qs("viewClan");
+    const geHomeCard = qs("geHomeCard");
+const viewClan = qs("viewClan");
   const viewPlayer = qs("viewPlayer");
   const viewGeSearch = qs("viewGeSearch");
   const viewGeItem = qs("viewGeItem");
@@ -1066,7 +1067,10 @@ function render() {
 
   if (ge_item) {
     show(landing, false);
-    show(viewClan, false);
+    
+    if (geHomeCard) show(geHomeCard, false);
+show(viewClan, false);
+    if (geHomeCard) show(geHomeCard, false);
     show(viewPlayer, false);
     show(viewGeSearch, false);
     show(viewGeItem, true);
@@ -1076,7 +1080,9 @@ function render() {
 
   if (ge) {
     show(landing, false);
-    show(viewClan, false);
+    
+    if (geHomeCard) show(geHomeCard, false);
+show(viewClan, false);
     show(viewPlayer, false);
     show(viewGeItem, false);
     show(viewGeSearch, true);
@@ -1086,7 +1092,9 @@ function render() {
 
   if (player) {
     show(landing, false);
-    show(viewClan, false);
+    
+    if (geHomeCard) show(geHomeCard, false);
+show(viewClan, false);
     show(viewGeSearch, false);
     show(viewGeItem, false);
     show(viewPlayer, true);
@@ -1096,7 +1104,9 @@ function render() {
 
   if (clan) {
     show(landing, false);
-    show(viewPlayer, false);
+    
+    if (geHomeCard) show(geHomeCard, false);
+show(viewPlayer, false);
     show(viewGeSearch, false);
     show(viewGeItem, false);
     show(viewClan, true);
@@ -1109,7 +1119,9 @@ function render() {
   show(viewGeSearch, false);
   show(viewGeItem, false);
   show(landing, true);
-  notice.textContent = "Tip: start typing to search, or paste a link with ?clan=, ?player=, or ?ge_item=.";
+  
+  if (geHomeCard) show(geHomeCard, true);
+notice.textContent = "Tip: start typing to search, or paste a link with ?clan=, ?player=, or ?ge_item=.";
   notice.textContent = "Tip: start typing to search, or paste a clan key / RSN.";
 }
 
