@@ -310,6 +310,7 @@ try {
         FROM member_activities
         WHERE member_id = :mid
           AND activity_text <> 'Rank-up required'
+          AND activity_text <> 'Rank-up processed'
         ORDER BY COALESCE(activity_date_utc, announced_at) DESC
         LIMIT 20;
     ");

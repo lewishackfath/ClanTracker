@@ -242,6 +242,8 @@ $stmt = $pdo->prepare("
 SELECT
   m.rsn,
   m.rank_name,
+  m.is_private,
+  m.private_since_utc,
   (mc.id IS NOT NULL) AS capped,
   (mv.id IS NOT NULL) AS visited
 FROM members m
@@ -294,7 +296,7 @@ $stmt->execute([':cid' => $clanId]);
 $lastSync = $stmt->fetchColumn();
 
 $lastPullUtc = tracker_dtmax([$lastPolled, $lastSnapshot, $lastSync]);
-$lastPullLocal = tracker_to_local($lastPullUtc, (string)$week['timezone']);
+$lastPullLocal = tracker_to_local($lastPullUtc, (string)($week['timezone'] ?? 'UTC'));
 
 // --- Top clan XP earner per skill (within selected period) ---
 $leaders = [];
@@ -511,12 +513,15 @@ tracker_json([
         'uncapped' => $uncapped,
         'percent_capped' => $percent,
     ],
-    'members' => array_map(static function(array $m) {
+    'members' => array_map(function(array $m) use ($week) {
+        $isPrivate = ((int)($m['is_private'] ?? 0) === 1);
         return [
             'rsn' => $m['rsn'],
             'rank_name' => $m['rank_name'],
             'capped' => ((int)$m['capped'] === 1),
             'visited' => ((int)($m['visited'] ?? 0) === 1),
+            'is_private' => $isPrivate,
+            'private_since_local' => $isPrivate ? tracker_to_local(($m['private_since_utc'] ?? null), (string)($week['timezone'] ?? 'UTC')) : null,
         ];
     }, $members),
     'ranks' => $ranks,

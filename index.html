@@ -10,7 +10,9 @@
   <header class="topbar">
     <div class="container">
       <div class="brand">
-        <img class="logoImg" src="https://24krs.com.au/wp-content/uploads/2025/12/24K-Logo.gif" alt="24K" />
+        <a href="https://tracker.24krs.com.au" target="_blank">
+          <img class="logoImg" src="https://24krs.com.au/wp-content/uploads/2025/12/24K-Logo.gif" alt="24K" />
+        </a>
         <div>
           <div class="title">Tracker</div>
           <div class="subtitle">Clan & member lookup</div>
@@ -92,6 +94,10 @@
           <div class="statValue" id="statActive">—</div>
         </div>
         <div class="statCard">
+          <div class="statLabel">Private profiles</div>
+          <div class="statValue" id="statPrivate">—</div>
+        </div>
+        <div class="statCard">
           <div class="statLabel">Capped</div>
           <div class="statValue" id="statCapped">—</div>
         </div>
@@ -126,6 +132,7 @@
           <button class="segBtn" data-filter="capped" type="button">Capped</button>
           <button class="segBtn" data-filter="uncapped" type="button">Uncapped</button>
           <button class="segBtn" data-filter="visited_only" type="button">Visited only</button>
+          <button class="segBtn" data-filter="private" type="button">Private</button>
         </div>
       </div>
 

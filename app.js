@@ -491,7 +491,9 @@ function renderClanXpLeaders() {
         <div class="leaderRow" role="button" aria-expanded="false">
           <img class="miniIcon" data-skill="${escapeHtml(skill)}" data-skillkey="${escapeHtml(key)}" alt="" />
           <div class="leaderSkill">${escapeHtml(skill)}</div>
-          <div class="leaderMeta">${escapeHtml(rsn)} • ${escapeHtml(gained)}</div>
+          <div class="leaderMeta">
+  <a href="?player=${encodeURIComponent(rsn)}" target="_blank" rel="noopener" class="leaderLink" onclick="event.stopPropagation()">${escapeHtml(rsn)}</a> • ${escapeHtml(gained)}
+</div>
         </div>
         <div class="leaderExpand hidden" style="margin-top:8px; padding:10px 12px; border:1px solid rgba(255,255,255,0.08); border-radius: 12px; background: rgba(0,0,0,0.14);">
           <div class="muted">Loading top earners…</div>
@@ -551,7 +553,7 @@ function renderClanXpLeaders() {
           return `
             <div style="display:flex; gap:10px; align-items:center; padding:6px 0; border-top:1px solid rgba(255,255,255,0.06);">
               <div style="width:22px; text-align:right; font-weight:900;">${n}.</div>
-              <div style="font-weight:800;">${escapeHtml(rsn)}</div>
+              <div style="font-weight:800;"><a href="?player=${encodeURIComponent(rsn)}" target="_blank" rel="noopener" class="leaderLink">${escapeHtml(rsn)}</a></div>
               <div class="muted" style="margin-left:auto; font-weight:800;">+${formatNumber(gainedXp)} XP</div>
             </div>
           `;
@@ -605,6 +607,8 @@ function renderMemberList() {
     members = members.filter(m => getCapped(m));
   } else if (f === "uncapped") {
     members = members.filter(m => !getCapped(m));
+  } else if (f === "private") {
+    members = members.filter(m => !!(m?.is_private ?? m?.private ?? false));
   } else if (f === "visitedonly" || f === "visited_only" || f === "visited-only") {
     members = members.filter(m => getVisited(m) && !getCapped(m));
   } else if (f.startsWith("rank:") || f.startsWith("rank=")) {
@@ -664,6 +668,7 @@ async function loadClanOverview(clanKey, period) {
   clanData = null;
   qs("clanSubheading").textContent = "Loading…";
   qs("statActive").textContent = "—";
+  if (qs("statPrivate")) qs("statPrivate").textContent = "—";
   qs("statCapped").textContent = "—";
   qs("statUncapped").textContent = "—";
   qs("statPercent").textContent = "—";
@@ -682,6 +687,14 @@ async function loadClanOverview(clanKey, period) {
   }
 
   clanData = data;
+
+  // Private profile count (client-side, based on member flags)
+  try {
+    const privCount = (data.members || []).filter(m => !!(m?.is_private ?? m?.private ?? false)).length;
+    if (qs("statPrivate")) qs("statPrivate").textContent = String(privCount);
+  } catch {
+    if (qs("statPrivate")) qs("statPrivate").textContent = "—";
+  }
 
   const clanName = data.clan?.name || clanKey;
   const tz = data.week?.timezone || "UTC";

@@ -427,6 +427,16 @@ code {
 .leaderSkill { font-weight: 900; }
 .leaderMeta { color: var(--muted); font-weight: 700; margin-left: auto; }
 
+.leaderLink {
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.leaderLink:hover {
+  opacity: 0.85;
+}
+
 /* ===============================
    Global background image
    =============================== */
