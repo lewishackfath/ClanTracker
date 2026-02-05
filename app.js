@@ -609,6 +609,8 @@ function renderMemberList() {
     members = members.filter(m => !getCapped(m));
   } else if (f === "private") {
     members = members.filter(m => !!(m?.is_private ?? m?.private ?? false));
+  } else if (f === "guests" || f === "guest") {
+    members = members.filter(m => getRank(m).toLowerCase() === "guest");
   } else if (f === "visitedonly" || f === "visited_only" || f === "visited-only") {
     members = members.filter(m => getVisited(m) && !getCapped(m));
   } else if (f.startsWith("rank:") || f.startsWith("rank=")) {
