@@ -100,6 +100,27 @@ function runemetrics_sync_member(PDO $pdo, int $memberId, int $activities = 20):
         $result['clan_id'] = (int)$member['clan_id'];
         $result['rsn'] = (string)$member['rsn'];
 
+        // -------------------------------------------------------------------
+        // Rank reconciliation should happen on every poll (capped or not).
+        // This is silent (no pings) and relies on clan roster (members_lite).
+        // -------------------------------------------------------------------
+        if (function_exists('ru_reconcile_member_rank_silent')) {
+            try {
+                $clanMini = ['id' => (int)$member['clan_id']];
+                // Prefer any richer clan loader if present
+                if (function_exists('rm_db_load_clan_reset')) {
+                    $full = rm_db_load_clan_reset($pdo, (int)$member['clan_id']);
+                    if (is_array($full) && !empty($full)) $clanMini = $full;
+                }
+                ru_reconcile_member_rank_silent($pdo, $clanMini, $member);
+                // Reload member so downstream logic sees the reconciled rank_name
+                $member = rm_db_get_member($pdo, $memberId) ?: $member;
+            } catch (Throwable $e) {
+                // never block polling
+            }
+        }
+
+
         $profile = rm_fetch_profile((string)$member['rsn'], $activities);
 
         // Handle private RuneMetrics profiles (poll less frequently in scheduler)
@@ -166,6 +187,16 @@ rm_db_clear_member_private($pdo, (int)$member['id']);
                     }
 
                     if ($rankOrder) {
+
+                        // Always reconcile rank silently (capped or not capped)
+                        if (function_exists('ru_reconcile_member_rank_silent')) {
+                            try {
+                                ru_reconcile_member_rank_silent($pdo, $clanFull, $member);
+                            } catch (Throwable $e) {
+                                // ignore
+                            }
+                        }
+
                         // Determine the CURRENT cap week to evaluate (prevents historical back-pings)
                         [$currentStartUtc, $currentEndUtc] = ah_cap_week_bounds_utc(
                             new DateTimeImmutable('now', new DateTimeZone('UTC')),

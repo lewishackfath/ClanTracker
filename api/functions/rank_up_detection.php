@@ -37,15 +37,53 @@ function rm_parse_dt_utc(string $dt): DateTimeImmutable
     return new DateTimeImmutable($dt, $tz);
 }
 
-function ru_normalise_rsn(string $rsn): string
-{
+function ru_normalise_rsn(string $rsn): string {
+    // Match the normalisation used in cron_sync_members.php
+    $rsn = preg_replace('/^\xEF\xBB\xBF/', '', $rsn) ?? $rsn;
     $rsn = trim($rsn);
     if ($rsn === '') return '';
-    // RuneScape members_lite often uses underscores.
+
+    // normalise weird spaces
+    $rsn = str_replace("\xA0", ' ', $rsn); // NBSP -> space
+
+    // remove zero-width / BOM / soft hyphen
+    $tmp = preg_replace('/[\x{200B}\x{200C}\x{200D}\x{FEFF}\x{00AD}]/u', '', $rsn);
+    if ($tmp !== null) $rsn = $tmp;
+
+    // collapse whitespace
+    $tmp = preg_replace('/\s+/u', ' ', $rsn);
+    if ($tmp !== null) $rsn = $tmp;
+
+    // keep RSN-safe-ish characters
+    $tmp = preg_replace('/[^0-9A-Za-z _-]+/u', ' ', $rsn);
+    if ($tmp !== null) $rsn = $tmp;
+    $rsn = trim($rsn);
+
+    // Unicode normalisation
+    if (class_exists('Normalizer')) {
+        $rsn = Normalizer::normalize($rsn, Normalizer::FORM_KC) ?: $rsn;
+    }
+
+    $rsn = mb_strtolower($rsn, 'UTF-8');
     $rsn = str_replace(' ', '_', $rsn);
-    $rsn = preg_replace('/[\p{Cc}\p{Cf}]/u', '', $rsn) ?? $rsn;
-    return strtolower($rsn);
+
+    // strip control chars
+    $tmp = preg_replace('/[\p{Cc}\p{Cf}]/u', '', $rsn);
+    if ($tmp !== null) $rsn = $tmp;
+
+    // collapse underscores + trim
+    $tmp = preg_replace('/_+/u', '_', $rsn);
+    if ($tmp !== null) $rsn = $tmp;
+    $rsn = trim($rsn, '_');
+
+    // enforce varchar(12)
+    if (mb_strlen($rsn, 'UTF-8') > 12) {
+        $rsn = mb_substr($rsn, 0, 12, 'UTF-8');
+    }
+
+    return $rsn;
 }
+
 
 function ru_http_get(string $url, int $timeoutSec = 25): string
 {
@@ -125,6 +163,54 @@ function ru_fetch_clan_ranks(string $clanName): array
 }
 
 /**
+ * Silently reconcile members.rank_name to the current RuneScape roster rank.
+ * - No pings
+ * - No synthetic activities
+ * - Runs regardless of cap status (safe to call often; roster fetch is cached)
+ */
+function ru_reconcile_member_rank_silent(PDO $pdo, array $clan, array $member): void
+{
+    $memberId = (int)($member['id'] ?? 0);
+    $clanId   = (int)($clan['id'] ?? ($member['clan_id'] ?? 0));
+    $rsn      = (string)($member['rsn'] ?? '');
+    if ($memberId <= 0 || $clanId <= 0 || trim($rsn) === '') return;
+
+    // Resolve clan name for members_lite using the same logic everywhere.
+    $clanName = '';
+    foreach (['rs_clan_name','clan_name','name','display_name'] as $k) {
+        if (!empty($clan[$k])) { $clanName = (string)$clan[$k]; break; }
+    }
+    if (trim($clanName) === '') {
+        $clanName = ru_get_clan_name_from_db($pdo, $clanId);
+    }
+    $clanName = trim($clanName);
+    if ($clanName === '') return;
+
+    try {
+        $roster = ru_fetch_clan_ranks($clanName);
+        $rsnNorm = ru_normalise_rsn($rsn);
+        if ($rsnNorm === '' || !isset($roster[$rsnNorm])) return;
+
+        $rsRankRaw = trim((string)$roster[$rsnNorm]);
+        if ($rsRankRaw === '') return;
+
+        $currentRankRaw = trim((string)($member['rank_name'] ?? ($member['rank'] ?? ($member['clan_rank'] ?? ''))));
+        if (ru_normalise_rank_label($currentRankRaw) === ru_normalise_rank_label($rsRankRaw)) {
+            return; // already in sync (ignoring decorations)
+        }
+
+        $st = $pdo->prepare('UPDATE members SET rank_name = :rank_name WHERE id = :id LIMIT 1');
+        $st->execute([
+            ':rank_name' => $rsRankRaw,
+            ':id' => $memberId,
+        ]);
+    } catch (Throwable $e) {
+        // Never block polling on roster reconciliation
+    }
+}
+
+
+/**
  * Get clan name from DB by clan_id (cached).
  */
 function ru_get_clan_name_from_db(PDO $pdo, int $clanId): string
@@ -133,16 +219,32 @@ function ru_get_clan_name_from_db(PDO $pdo, int $clanId): string
     if ($clanId <= 0) return '';
     if (isset($cache[$clanId])) return (string)$cache[$clanId];
 
-    try {
-        $st = $pdo->prepare('SELECT name FROM clans WHERE id = :id LIMIT 1');
-        $st->execute([':id' => $clanId]);
-        $name = (string)($st->fetchColumn() ?: '');
-        $cache[$clanId] = $name;
-        return $name;
-    } catch (Throwable $e) {
-        $cache[$clanId] = '';
-        return '';
+    // Try a few likely column names without assuming schema.
+    $candidates = [
+        // Most specific first
+        'rs_clan_name',
+        'clan_name',
+        'name',
+        'display_name',
+    ];
+
+    foreach ($candidates as $col) {
+        try {
+            $st = $pdo->prepare("SELECT `$col` FROM clans WHERE id = :id LIMIT 1");
+            $st->execute([':id' => $clanId]);
+            $val = (string)($st->fetchColumn() ?: '');
+            $val = trim($val);
+            if ($val !== '') {
+                $cache[$clanId] = $val;
+                return $val;
+            }
+        } catch (Throwable $e) {
+            // Column doesn't exist or query failed; try next
+        }
     }
+
+    $cache[$clanId] = '';
+    return '';
 }
 
 /**
@@ -188,6 +290,9 @@ function detect_and_notify_rank_up(
         $weekStart = rm_parse_dt_utc($capWeekStartUtc)->format('Y-m-d H:i:s');
     }
     $weekEnd = gmdate('Y-m-d H:i:s', strtotime($weekStart . ' +7 days'));
+
+    // Always reconcile DB rank from the RuneScape roster (even if this cap-week is already processed)
+    ru_reconcile_member_rank_silent($pdo, $clan, $member);
 
     /* ---------- weekly guard ---------- */
     // If we've already processed rank-up logic for this member in this cap week,
