@@ -114,7 +114,13 @@
 
       <div class="panel" style="margin-top:14px;">
         <div class="row" style="align-items:center;">
-          <h3 class="h2" style="margin:0;">Top XP earners by skill</h3>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <h3 class="h2" style="margin:0;">Clan XP</h3>
+            <div class="segmented xpTabs" id="clanXpTabs" role="tablist" aria-label="Clan XP view">
+              <button class="segBtn active" type="button" data-xptab="total" role="tab" aria-selected="true">Total Clan XP</button>
+              <button class="segBtn" type="button" data-xptab="leaders" role="tab" aria-selected="false">Top earners</button>
+            </div>
+          </div>
           <div style="min-width:220px;">
             <select id="clanXpPeriod" class="select"></select>
           </div>

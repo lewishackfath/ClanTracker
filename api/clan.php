@@ -319,6 +319,24 @@ $leaders['Total'] = [
     'gained_xp' => 0,
     'has_data' => false,
 ];
+
+// --- Total clan XP per skill (within selected period) ---
+$totals = [];
+foreach (tracker_skill_order() as $skill) {
+    $totals[$skill] = [
+        'skill' => $skill,
+        'skill_key' => tracker_skill_key($skill),
+        'gained_xp' => 0,
+        'has_data' => false,
+    ];
+}
+$totals['Total'] = [
+    'skill' => 'Total',
+    'skill_key' => 'total',
+    'gained_xp' => 0,
+    'has_data' => false,
+];
+
 // Grab one start and end snapshot per member for the selected period.
 // Snapshots can be infrequent, so we prefer:
 //   - start snapshot: latest snapshot at/before start (fallback to earliest after start)
@@ -359,6 +377,7 @@ $stmt = $pdo->prepare("
      )
     WHERE m.clan_id = :cid
       AND m.is_active = 1
+      AND m.rank_name != 'guest'
   ");
 
 try {
@@ -381,6 +400,11 @@ try {
         foreach ($endSkills as $k => $v) { if (strcasecmp((string)$k, 'total') === 0) continue; $endTotal += (int)$v; }
         $gainTotal = $endTotal - $startTotal;
         if ($gainTotal > 0) {
+            $totals['Total']['gained_xp'] += $gainTotal;
+            $totals['Total']['has_data'] = true;
+        }
+
+        if ($gainTotal > 0) {
             if ($gainTotal > (int)$leaders['Total']['gained_xp']) {
                 $leaders['Total']['gained_xp'] = $gainTotal;
                 $leaders['Total']['rsn'] = $rsn;
@@ -400,6 +424,8 @@ try {
             if ($sx === null || $ex === null) continue;
             $gain = (int)$ex - (int)$sx;
             if ($gain <= 0) continue;
+            $totals[$skillName]['gained_xp'] += $gain;
+            $totals[$skillName]['has_data'] = true;
             if ($gain > (int)$leaders[$skillName]['gained_xp']) {
                 $leaders[$skillName]['gained_xp'] = $gain;
                 $leaders[$skillName]['rsn'] = $rsn;
@@ -419,6 +445,8 @@ try {
 }
 
 $leadersList = array_values(array_merge(['Total' => $leaders['Total']], array_diff_key($leaders, ['Total' => 1])));
+
+$totalsList = array_values(array_merge(['Total' => $totals['Total']], array_diff_key($totals, ['Total' => 1])));
 
 $skills = tracker_skill_order();
 
@@ -530,6 +558,7 @@ tracker_json([
         'start_utc' => $xpWindow['start_utc'],
         'end_utc' => $xpWindow['end_utc'],
         'leaders_by_skill' => $leadersList,
+        'totals_by_skill' => $totalsList,
     ],
     'xp_periods' => [
         ['value' => '24h', 'label' => 'Last 24 hours'],

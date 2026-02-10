@@ -40,6 +40,7 @@ WHERE
     OR CAST(c.id AS CHAR) LIKE :likeRaw
     OR c.name LIKE :likeRaw
   )
+  AND m.is_active = 1
 ORDER BY
   m.is_active DESC,
   m.rsn ASC

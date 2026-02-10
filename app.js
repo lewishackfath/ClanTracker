@@ -432,6 +432,8 @@ function classifyActivity(text, details) {
 let clanData = null;
 let clanFilter = "all";
 let selectedClanXpPeriod = "7d";
+let clanXpView = "total"; // 'total' or 'leaders'
+
 const clanSkillTopCache = new Map(); // key: `${period}|${skill}` -> array
 
 function populateClanXpPeriods(periods, currentValue) {
@@ -460,6 +462,28 @@ async function fetchClanTopEarnersForSkill(skillName) {
     return data.top_earners;
   }
   return null;
+}
+
+
+function setClanXpView(view) {
+  clanXpView = (String(view || "total").toLowerCase() === "leaders") ? "leaders" : "total";
+
+  const tabs = qs("clanXpTabs");
+  if (tabs) {
+    tabs.querySelectorAll("button[data-xptab]").forEach(btn => {
+      const v = String(btn.getAttribute("data-xptab") || "").toLowerCase();
+      const isActive = v === clanXpView;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+  }
+
+  renderClanXpSection();
+}
+
+function renderClanXpSection() {
+  if (clanXpView === "leaders") renderClanXpLeaders();
+  else renderClanXpTotals();
 }
 
 function renderClanXpLeaders() {
@@ -576,6 +600,116 @@ function renderClanXpLeaders() {
   });
 }
 
+
+
+function renderClanXpTotals() {
+  const grid = qs("clanSkillLeaders");
+  const meta = qs("clanXpMeta");
+  if (!grid || !meta || !clanData?.ok) return;
+
+  const xp = clanData.xp || {};
+  const totals = xp.totals_by_skill || xp.total_by_skill || xp.total_clan_xp_by_skill || [];
+
+  const start = xp.start_utc || "";
+  const end = xp.end_utc || "";
+  meta.textContent = start && end ? `Window: ${start} -> ${end} UTC` : "";
+
+  if (!Array.isArray(totals) || !totals.length) {
+    grid.innerHTML = `<div class="muted">No XP snapshot data yet for this period.</div>`;
+    return;
+  }
+
+  grid.innerHTML = totals.map(r => {
+    const skill = r.skill || "—";
+    const key = r.skill_key || skill;
+    const gained = r.has_data ? `${formatNumber(r.gained_xp)} XP` : "—";
+
+    return `
+      <div class="leaderTile" data-skill="${escapeHtml(skill)}" data-skillparam="${escapeHtml(key)}">
+        <div class="leaderRow" role="button" aria-expanded="false">
+          <img class="miniIcon" data-skill="${escapeHtml(skill)}" data-skillkey="${escapeHtml(key)}" alt="" />
+          <div class="leaderSkill">${escapeHtml(skill)}</div>
+          <div class="leaderMeta">Clan total • ${escapeHtml(gained)}</div>
+        </div>
+        <div class="leaderExpand hidden" style="margin-top:8px; padding:10px 12px; border:1px solid rgba(255,255,255,0.08); border-radius: 12px; background: rgba(0,0,0,0.14);">
+          <div class="muted">Loading top earners…</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  grid.querySelectorAll("img.miniIcon").forEach(img => {
+    const skillName = img.getAttribute("data-skill") || "";
+    const skillKey = img.getAttribute("data-skillkey") || "";
+    const candidates = [
+      ...iconCandidates("assets/skills/", skillKey),
+      ...iconCandidates("assets/skills/", skillName),
+    ];
+    setImgWithFallback(img, candidates, "assets/skills/_default.png");
+  });
+
+  // Optional drilldown: click to show top 10 earners for that skill (same as leaders view)
+  grid.querySelectorAll(".leaderTile").forEach(tile => {
+    const row = tile.querySelector(".leaderRow");
+    const expand = tile.querySelector(".leaderExpand");
+    const skill = tile.getAttribute("data-skill") || "";
+    const skillParam = tile.getAttribute("data-skillparam") || skill;
+
+    row.addEventListener("click", async () => {
+      // Close others
+      grid.querySelectorAll(".leaderExpand").forEach(el => { if (el !== expand) el.classList.add("hidden"); });
+      grid.querySelectorAll(".leaderRow").forEach(el => { if (el !== row) el.setAttribute("aria-expanded", "false"); });
+
+      const isOpen = !expand.classList.contains("hidden");
+      if (isOpen) {
+        expand.classList.add("hidden");
+        row.setAttribute("aria-expanded", "false");
+        return;
+      }
+
+      expand.classList.remove("hidden");
+      row.setAttribute("aria-expanded", "true");
+
+      if (expand.getAttribute("data-loaded") === "1") return;
+
+      expand.innerHTML = `<div class="muted">Loading top earners…</div>`;
+      try {
+        const list = await fetchClanTopEarnersForSkill(skillParam);
+        if (!list || !list.length) {
+          expand.innerHTML = `<div class="muted">No XP gains recorded for ${escapeHtml(skill)} in this period.</div>`;
+          expand.setAttribute("data-loaded", "1");
+          return;
+        }
+
+        const rowsHtml = list.slice(0, 10).map((p, idx) => {
+          const n = idx + 1;
+          const rsn = p.rsn || "—";
+          const gainedXp = p.gained_xp ?? null;
+          return `
+            <div style="display:flex; gap:10px; align-items:center; padding:6px 0; border-top:1px solid rgba(255,255,255,0.06);">
+              <div style="width:22px; text-align:right; font-weight:900;">${n}.</div>
+              <div style="font-weight:800;"><a href="?player=${encodeURIComponent(rsn)}" target="_blank" rel="noopener" class="leaderLink">${escapeHtml(rsn)}</a></div>
+              <div class="muted" style="margin-left:auto; font-weight:800;">+${formatNumber(gainedXp)} XP</div>
+            </div>
+          `;
+        }).join("");
+
+        expand.innerHTML = `
+          <div style="display:flex; align-items:baseline; gap:10px;">
+            <div style="font-weight:900;">Top 10 • ${escapeHtml(skill)}</div>
+            <div class="muted" style="margin-left:auto;">Period: ${escapeHtml(selectedClanXpPeriod)}</div>
+          </div>
+          <div style="margin-top:8px;">
+            ${rowsHtml}
+          </div>
+        `;
+        expand.setAttribute("data-loaded", "1");
+      } catch (e) {
+        expand.innerHTML = `<div class="muted">Couldn’t load earners for this skill.</div>`;
+      }
+    });
+  });
+}
 
 function setFilter(newFilter) {
   clanFilter = String(newFilter || "all").trim().toLowerCase();
@@ -713,7 +847,7 @@ async function loadClanOverview(clanKey, period) {
   renderLastPull(qs("clanLastPull"), data.last_pull);
   selectedClanXpPeriod = data.xp?.period || usePeriod;
   populateClanXpPeriods(data.xp_periods || [], selectedClanXpPeriod);
-  renderClanXpLeaders();
+  setClanXpView("total");
   renderMemberList();
 }
 
@@ -1591,7 +1725,16 @@ function wireUI() {
   qs("memberSearch").addEventListener("input", debounce(renderMemberList, 120));
   document.querySelectorAll(".segBtn").forEach(btn => btn.addEventListener("click", () => setFilter(btn.dataset.filter)));
 
-    const clanXpSel = qs("clanXpPeriod");
+    
+  // Clan XP tabs
+  const clanXpTabs = qs("clanXpTabs");
+  if (clanXpTabs) {
+    clanXpTabs.querySelectorAll("button[data-xptab]").forEach(btn => {
+      btn.addEventListener("click", () => setClanXpView(btn.getAttribute("data-xptab") || "total"));
+    });
+  }
+
+const clanXpSel = qs("clanXpPeriod");
   if (clanXpSel) {
     clanXpSel.addEventListener("change", () => {
       const v = clanXpSel.value || "7d";
