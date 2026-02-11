@@ -6,36 +6,16 @@ declare(strict_types=1);
  *
  * Detects rank-up eligibility after a member caps.
  *
- * Enhancements merged from API version:
- * - Cap-week guard: only process rank-up logic once per member per cap week
- *   (uses 'Rank-up required' OR 'Rank-up processed' markers).
- * - RuneScape roster reconciliation (members_lite):
- *   - If the player is already promoted in-game, update members.rank_name and do NOT ping.
- *   - Otherwise insert 'Rank-up required' + ping (deduped).
- * - Inserts a weekly 'Rank-up processed' marker to prevent repeat work.
+ * NEW (anti-duplicate using DB-driven rank sync):
+ * - Member ranks are synced to the DB by cron_sync_members.php.
+ * - Before sending a ping, we check members.last_promotion_at_utc within the current cap-week.
+ *   - If a promotion already happened this cap-week (even before cap was detected), we DO NOT ping.
+ *   - Otherwise, we insert the synthetic marker + send the ping (deduped per cap-week + transition).
  */
 
 require_once __DIR__ . '/discord.php';
 
 /* -------------------- helpers -------------------- */
-
-/**
- * Parse a UTC datetime string that may be in 'Y-m-d H:i:s.v' or 'Y-m-d H:i:s' format.
- */
-function rm_parse_dt_utc(string $dt): DateTimeImmutable
-{
-    $dt = trim($dt);
-    $tz = new DateTimeZone('UTC');
-    if ($dt === '') return new DateTimeImmutable('now', $tz);
-
-    $d = DateTimeImmutable::createFromFormat('Y-m-d H:i:s.v', $dt, $tz);
-    if ($d instanceof DateTimeImmutable) return $d;
-
-    $d = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $dt, $tz);
-    if ($d instanceof DateTimeImmutable) return $d;
-
-    return new DateTimeImmutable($dt, $tz);
-}
 
 function ru_normalise_rsn(string $rsn): string {
     // Match the normalisation used in cron_sync_members.php
@@ -84,9 +64,7 @@ function ru_normalise_rsn(string $rsn): string {
     return $rsn;
 }
 
-
-function ru_http_get(string $url, int $timeoutSec = 25): string
-{
+function ru_http_get(string $url, int $timeoutSec = 25): string {
     $ch = curl_init($url);
     if ($ch === false) throw new RuntimeException('curl_init failed');
 
@@ -113,17 +91,17 @@ function ru_http_get(string $url, int $timeoutSec = 25): string
  * Fetch clan roster ranks from RuneScape members_lite.
  * Returns: [ normalised_rsn => rank_name ]
  *
- * Cached in-process (2 minutes) to avoid repeated HTTP calls.
+ * Cached per-request per clan name to avoid repeated HTTP calls.
  */
-function ru_fetch_clan_ranks(string $clanName): array
-{
+function ru_fetch_clan_ranks(string $clanName): array {
     static $cache = []; // [lower_clan_name => ['at'=>time(), 'map'=>array]]
 
     $key = strtolower(trim($clanName));
     if ($key === '') return [];
 
-    if (isset($cache[$key]) && is_array($cache[$key]) && (time() - (int)($cache[$key]['at'] ?? 0) < 120)) {
-        return (array)($cache[$key]['map'] ?? []);
+    // 2-minute cache per request-run (covers multiple members in one cron pass).
+    if (isset($cache[$key]) && is_array($cache[$key]) && (time() - (int)$cache[$key]['at'] < 120)) {
+        return (array)$cache[$key]['map'];
     }
 
     $url = 'https://secure.runescape.com/m=clan-hiscores/members_lite.ws?clanName=' . rawurlencode($clanName);
@@ -149,112 +127,48 @@ function ru_fetch_clan_ranks(string $clanName): array
             continue;
         }
 
-        $rawRsn  = (string)($row[0] ?? '');
+        $rawRsn = (string)($row[0] ?? '');
         $rawRank = (string)($row[1] ?? '');
 
         $rsnNorm = ru_normalise_rsn($rawRsn);
         if ($rsnNorm === '') continue;
 
-        $map[$rsnNorm] = trim($rawRank);
+        $rankName = trim($rawRank);
+        $map[$rsnNorm] = $rankName;
     }
 
     $cache[$key] = ['at' => time(), 'map' => $map];
     return $map;
 }
 
-/**
- * Silently reconcile members.rank_name to the current RuneScape roster rank.
- * - No pings
- * - No synthetic activities
- * - Runs regardless of cap status (safe to call often; roster fetch is cached)
- */
-function ru_reconcile_member_rank_silent(PDO $pdo, array $clan, array $member): void
-{
-    $memberId = (int)($member['id'] ?? 0);
-    $clanId   = (int)($clan['id'] ?? ($member['clan_id'] ?? 0));
-    $rsn      = (string)($member['rsn'] ?? '');
-    if ($memberId <= 0 || $clanId <= 0 || trim($rsn) === '') return;
-
-    // Resolve clan name for members_lite using the same logic everywhere.
-    $clanName = '';
-    foreach (['rs_clan_name','clan_name','name','display_name'] as $k) {
-        if (!empty($clan[$k])) { $clanName = (string)$clan[$k]; break; }
-    }
-    if (trim($clanName) === '') {
-        $clanName = ru_get_clan_name_from_db($pdo, $clanId);
-    }
-    $clanName = trim($clanName);
-    if ($clanName === '') return;
-
-    try {
-        $roster = ru_fetch_clan_ranks($clanName);
-        $rsnNorm = ru_normalise_rsn($rsn);
-        if ($rsnNorm === '' || !isset($roster[$rsnNorm])) return;
-
-        $rsRankRaw = trim((string)$roster[$rsnNorm]);
-        if ($rsRankRaw === '') return;
-
-        $currentRankRaw = trim((string)($member['rank_name'] ?? ($member['rank'] ?? ($member['clan_rank'] ?? ''))));
-        if (ru_normalise_rank_label($currentRankRaw) === ru_normalise_rank_label($rsRankRaw)) {
-            return; // already in sync (ignoring decorations)
-        }
-
-        $st = $pdo->prepare('UPDATE members SET rank_name = :rank_name WHERE id = :id LIMIT 1');
-        $st->execute([
-            ':rank_name' => $rsRankRaw,
-            ':id' => $memberId,
-        ]);
-    } catch (Throwable $e) {
-        // Never block polling on roster reconciliation
-    }
-}
 
 
 /**
  * Get clan name from DB by clan_id (cached).
  */
-function ru_get_clan_name_from_db(PDO $pdo, int $clanId): string
-{
+function ru_get_clan_name_from_db(PDO $pdo, int $clanId): string {
     static $cache = [];
     if ($clanId <= 0) return '';
-    if (isset($cache[$clanId])) return (string)$cache[$clanId];
-
-    // Try a few likely column names without assuming schema.
-    $candidates = [
-        // Most specific first
-        'rs_clan_name',
-        'clan_name',
-        'name',
-        'display_name',
-    ];
-
-    foreach ($candidates as $col) {
-        try {
-            $st = $pdo->prepare("SELECT `$col` FROM clans WHERE id = :id LIMIT 1");
-            $st->execute([':id' => $clanId]);
-            $val = (string)($st->fetchColumn() ?: '');
-            $val = trim($val);
-            if ($val !== '') {
-                $cache[$clanId] = $val;
-                return $val;
-            }
-        } catch (Throwable $e) {
-            // Column doesn't exist or query failed; try next
-        }
+    if (isset($cache[$clanId])) return $cache[$clanId];
+    try {
+        $st = $pdo->prepare("SELECT name FROM clans WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $clanId]);
+        $name = (string)($st->fetchColumn() ?: '');
+        $cache[$clanId] = $name;
+        return $name;
+    } catch (Throwable $e) {
+        $cache[$clanId] = '';
+        return '';
     }
-
-    $cache[$clanId] = '';
-    return '';
 }
 
 /**
  * Very light normalisation so "Recruit ⭐" matches "Recruit".
  */
-function ru_normalise_rank_label(string $rank): string
-{
+function ru_normalise_rank_label(string $rank): string {
     $rank = trim($rank);
     if ($rank === '') return '';
-    // Remove emoji/symbols; keep letters, numbers, spaces, apostrophes.
+    // Remove emoji / symbols; keep letters, numbers, spaces, apostrophes.
     $rank = preg_replace('/[^\p{L}\p{N}\'\s]/u', '', $rank) ?? $rank;
     $rank = preg_replace('/\s+/u', ' ', $rank) ?? $rank;
     return trim($rank);
@@ -275,28 +189,19 @@ function detect_and_notify_rank_up(
     $clanId   = (int)($clan['id'] ?? 0);
     $rsn      = (string)($member['rsn'] ?? '');
 
-    if ($memberId <= 0 || $clanId <= 0 || trim($rsn) === '') return;
+    if ($memberId <= 0 || $clanId <= 0 || $rsn === '') return;
 
-    // Determine clan name (from $clan or DB)
-    $clanName = (string)($clan['name'] ?? '');
-    if (trim($clanName) === '') {
-        $clanName = ru_get_clan_name_from_db($pdo, $clanId);
-    }
-
-    /* ---------- cap-week window normalisation (seconds precision) ---------- */
+    /* ---------- cap-week window normalisation ---------- */
+    // Normalise week start to second precision (stable string)
     $weekStart = substr(trim($capWeekStartUtc), 0, 19); // "Y-m-d H:i:s"
     if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $weekStart)) {
-        // Fallback to parsing known formats
-        $weekStart = rm_parse_dt_utc($capWeekStartUtc)->format('Y-m-d H:i:s');
+        $weekStart = gmdate('Y-m-d H:i:s');
     }
     $weekEnd = gmdate('Y-m-d H:i:s', strtotime($weekStart . ' +7 days'));
 
-    // Always reconcile DB rank from the RuneScape roster (even if this cap-week is already processed)
-    ru_reconcile_member_rank_silent($pdo, $clan, $member);
-
-    /* ---------- weekly guard ---------- */
-    // If we've already processed rank-up logic for this member in this cap week,
-    // do not run again (prevents multi-pings/multi-promotions this week).
+    /* ---------- weekly guard (prevents multi-pings / multi-promotions) ---------- */
+    // If we've already processed rank-up logic for this member in this cap week (either required or processed),
+    // do not run again.
     $stGuard = $pdo->prepare("
         SELECT id FROM member_activities
         WHERE member_id = :member_id
@@ -310,141 +215,106 @@ function detect_and_notify_rank_up(
         ':ws' => $weekStart,
         ':we' => $weekEnd,
     ]);
-    if ($stGuard->fetch()) return;
-
-    /* ---------- rank order mapping ---------- */
-    $cleanRankOrder = [];
-    foreach ($rankOrder as $r) {
-        $r = trim((string)$r);
-        if ($r !== '') $cleanRankOrder[] = $r;
+    if ($stGuard->fetch()) {
+        return;
     }
-    if (!$cleanRankOrder) return;
 
+
+
+    // Normalise rank order map (allow minor decorations in stored rank)
     $rankIndex = [];
-    foreach ($cleanRankOrder as $i => $r) {
-        $rankIndex[ru_normalise_rank_label($r)] = (int)$i;
+    foreach ($rankOrder as $i => $r) {
+        $rankIndex[ru_normalise_rank_label((string)$r)] = (int)$i;
     }
     if (!$rankIndex) return;
 
-    $currentRankRaw = (string)($member['rank_name'] ?? ($member['rank'] ?? ($member['clan_rank'] ?? '')));
-    $currentRankRaw = trim($currentRankRaw);
+    $currentRankRaw = (string)($member['rank_name'] ?? '');
     $currentRankKey = ru_normalise_rank_label($currentRankRaw);
     if ($currentRankKey === '' || !isset($rankIndex[$currentRankKey])) return;
 
-    $currentIdx = (int)$rankIndex[$currentRankKey];
+    $currentIdx = $rankIndex[$currentRankKey];
 
-    // Max rank field can vary across deployments; support common names.
-    $maxRankRaw = (string)(
-        $clan['max_rank_by_capping'] ??
-        $clan['max_rank_for_capping'] ??
-        $clan['max_rank'] ??
-        ''
-    );
-    $maxRankRaw = trim($maxRankRaw);
+    $maxRankRaw = (string)($clan['max_rank_by_capping'] ?? '');
+    $maxRankKey = ru_normalise_rank_label($maxRankRaw);
+    if ($maxRankKey === '' || !isset($rankIndex[$maxRankKey])) return;
 
-    // If max rank isn't configured (or doesn't match), assume the last rank in the order.
-    $maxIdx = count($cleanRankOrder) - 1;
-    if ($maxRankRaw !== '') {
-        $maxKey = ru_normalise_rank_label($maxRankRaw);
-        if ($maxKey !== '' && isset($rankIndex[$maxKey])) {
-            $maxIdx = (int)$rankIndex[$maxKey];
-        }
-    }
-
+    $maxIdx = $rankIndex[$maxRankKey];
     if ($currentIdx >= $maxIdx) return;
 
     $newIdx = $currentIdx + 1;
-    if (!isset($cleanRankOrder[$newIdx])) return;
 
-    $newRank    = (string)$cleanRankOrder[$newIdx];
+    // Get canonical new rank label from rankOrder
+    $newRank = (string)($rankOrder[$newIdx] ?? '');
     $newRankKey = ru_normalise_rank_label($newRank);
     if ($newRankKey === '' || !isset($rankIndex[$newRankKey])) return;
+/* ---------- promotion guard (DB-driven) ---------- */
+// If a promotion has already occurred within this cap-week window, we must not ping again,
+// even if the cap is detected later (admin may have promoted early).
+$lastPromoRaw = $member['last_promotion_at_utc'] ?? null;
+if ($lastPromoRaw === null) {
+    $stLP = $pdo->prepare("SELECT last_promotion_at_utc FROM members WHERE id = :id LIMIT 1");
+    $stLP->execute([':id' => $memberId]);
+    $rowLP = $stLP->fetch(PDO::FETCH_ASSOC);
+    $lastPromoRaw = $rowLP['last_promotion_at_utc'] ?? null;
+}
+$lastPromo = $lastPromoRaw ? substr((string)$lastPromoRaw, 0, 19) : '';
+if ($lastPromo !== '' && $lastPromo >= $weekStart && $lastPromo < $weekEnd) {
+    // Mark as processed for this cap week (prevents any further rank-up checks this week).
+    $processedHash = hash('sha256', $memberId . '|' . $weekStart . '|processed');
+    $stProc = $pdo->prepare("
+        INSERT IGNORE INTO member_activities
+          (member_id, member_clan_id, activity_hash, activity_date_utc, activity_text, activity_details, is_announced, created_at)
+        VALUES
+          (:member_id, :clan_id, :hash, UTC_TIMESTAMP(3), 'Rank-up processed', :details, 1, UTC_TIMESTAMP(3))
+    ");
+    $stProc->execute([
+        ':member_id' => $memberId,
+        ':clan_id' => $clanId,
+        ':hash' => $processedHash,
+        ':details' => "{$rsn} rank-up not required this cap week (promotion already detected at {$lastPromoRaw}).",
+    ]);
+    return;
+}
 
-    /* ---------- roster reconcile (if already promoted, update + mark processed, no ping) ---------- */
-    if (trim($clanName) !== '') {
-        try {
-            $roster = ru_fetch_clan_ranks($clanName);
-            $rsnNorm = ru_normalise_rsn($rsn);
+/* ---------- dedupe (cap-week window + hash) ---------- */
 
-            if ($rsnNorm !== '' && isset($roster[$rsnNorm])) {
-                $rsRankRaw = (string)$roster[$rsnNorm];
-                $rsRankKey = ru_normalise_rank_label($rsRankRaw);
+$detailsNeedle = ru_normalise_rank_label($currentRankRaw) . ' → ' . ru_normalise_rank_label($newRank);
 
-                if ($rsRankKey !== '' && isset($rankIndex[$rsRankKey])) {
-                    $rsIdx = (int)$rankIndex[$rsRankKey];
-
-                    if ($rsIdx >= $newIdx) {
-                        // Update DB rank_name if different
-                        if (ru_normalise_rank_label($currentRankRaw) !== $rsRankKey) {
-                            $st = $pdo->prepare('UPDATE members SET rank_name = :rank_name WHERE id = :id LIMIT 1');
-                            $st->execute([
-                                ':rank_name' => $rsRankRaw,
-                                ':id' => $memberId,
-                            ]);
-                        }
-
-                        // Mark processed for this cap week
-                        $processedHash = hash('sha256', $memberId . '|' . $weekStart . '|processed');
-                        $stProc = $pdo->prepare("
-                            INSERT IGNORE INTO member_activities
-                              (member_id, member_clan_id, activity_hash, activity_date_utc, activity_text, activity_details, is_announced, created_at)
-                            VALUES
-                              (:member_id, :clan_id, :hash, UTC_TIMESTAMP(3), 'Rank-up processed', :details, 1, UTC_TIMESTAMP(3))
-                        ");
-                        $stProc->execute([
-                            ':member_id' => $memberId,
-                            ':clan_id' => $clanId,
-                            ':hash' => $processedHash,
-                            ':details' => "{$rsn} rank-up check complete for this cap week (already promoted in-game).",
-                        ]);
-
-                        return;
-                    }
-                }
-            }
-        } catch (Throwable $e) {
-            // Roster fetch failing should not block rank-up alerts.
-        }
-    }
-
-    /* ---------- dedupe (cap-week window + hash) ---------- */
-
-    // 1) Window-based check (robust even if hash format ever changes)
-    $stWin = $pdo->prepare("
+    // 1) window-based dedupe
+    $stCheckWindow = $pdo->prepare("
         SELECT id FROM member_activities
         WHERE member_id = :member_id
           AND activity_text = 'Rank-up required'
           AND activity_date_utc >= :ws
           AND activity_date_utc < :we
-          AND activity_details LIKE :needle
-        ORDER BY id DESC
+          AND (activity_details LIKE :like1 OR activity_details LIKE :like2)
         LIMIT 1
     ");
-    $needle = '%' . $currentRankRaw . ' → ' . $newRank . '%';
-    $stWin->execute([
+    $stCheckWindow->execute([
         ':member_id' => $memberId,
         ':ws' => $weekStart,
         ':we' => $weekEnd,
-        ':needle' => $needle,
+        ':like1' => '%' . $currentRankRaw . '%',
+        ':like2' => '%' . $newRank . '%',
     ]);
-    if ($stWin->fetch()) return;
+    if ($stCheckWindow->fetch()) return;
 
-    // 2) Hash-based check
+    // 2) hash-based dedupe (unique key)
     $hash = hash('sha256', $memberId . '|' . $weekStart . '|' . $currentRankKey . '>' . $newRankKey);
 
-    $stCheck = $pdo->prepare("
+    $stCheckHash = $pdo->prepare("
         SELECT id FROM member_activities
         WHERE member_id = :member_id
           AND activity_hash = :hash
         LIMIT 1
     ");
-    $stCheck->execute([
+    $stCheckHash->execute([
         ':member_id' => $memberId,
         ':hash' => $hash,
     ]);
-    if ($stCheck->fetch()) return;
+    if ($stCheckHash->fetch()) return;
 
-    // Insert synthetic activity marker (always, even if Discord isn't configured)
+    // Insert synthetic activity marker
     $stInsert = $pdo->prepare("
         INSERT INTO member_activities
           (member_id, member_clan_id, activity_hash, activity_date_utc, activity_text, activity_details, is_announced, created_at)
@@ -468,47 +338,29 @@ function detect_and_notify_rank_up(
         ':details' => $details,
     ]);
 
-    // Also insert a weekly "processed" marker so we don't run again this cap week.
+    
+    // Also insert a weekly "processed" marker so we don't ping again this cap week.
     $processedHash = hash('sha256', $memberId . '|' . $weekStart . '|processed');
-    try {
-        $stProc = $pdo->prepare("
-            INSERT IGNORE INTO member_activities
-              (member_id, member_clan_id, activity_hash, activity_date_utc, activity_text, activity_details, is_announced, created_at)
-            VALUES
-              (:member_id, :clan_id, :hash, UTC_TIMESTAMP(3), 'Rank-up processed', :details, 1, UTC_TIMESTAMP(3))
-        ");
-        $stProc->execute([
-            ':member_id' => $memberId,
-            ':clan_id' => $clanId,
-            ':hash' => $processedHash,
-            ':details' => "{$rsn} rank-up check complete for this cap week (ping sent or pending).",
-        ]);
-    } catch (Throwable $e) {
-        // ignore
-    }
+    $stProc = $pdo->prepare("
+        INSERT IGNORE INTO member_activities
+          (member_id, member_clan_id, activity_hash, activity_date_utc, activity_text, activity_details, is_announced, created_at)
+        VALUES
+          (:member_id, :clan_id, :hash, UTC_TIMESTAMP(3), 'Rank-up processed', :details, 1, UTC_TIMESTAMP(3))
+    ");
+    $stProc->execute([
+        ':member_id' => $memberId,
+        ':clan_id' => $clanId,
+        ':hash' => $processedHash,
+        ':details' => "{$rsn} rank-up check complete for this cap week (ping sent or pending).",
+    ]);
 
-    /* ---------- Discord ping ---------- */
-
-    // Normalise bot token (some configs include the "Bot " prefix).
-    $botToken = trim($botToken);
-    if (stripos($botToken, 'Bot ') === 0) {
-        $botToken = trim(substr($botToken, 4));
-    }
-
-    $channelId = trim((string)($clan['discord_ping_channel_id'] ?? ''));
-    if ($channelId === '' || $botToken === '') {
-        return;
-    }
-
-    // Build admin mention string (supports JSON array or comma-separated fallback)
+// Build admin mention string
     $roleIds = [];
     if (!empty($clan['discord_ping_role_ids_json'])) {
         $decoded = json_decode((string)$clan['discord_ping_role_ids_json'], true);
         if (is_array($decoded)) {
-            $roleIds = array_values(array_filter(array_map('strval', $decoded)));
+            $roleIds = $decoded;
         }
-    } elseif (!empty($clan['discord_ping_role_ids'])) {
-        $roleIds = array_values(array_filter(array_map('trim', explode(',', (string)$clan['discord_ping_role_ids']))));
     }
 
     $mentions = '';
@@ -522,34 +374,18 @@ function detect_and_notify_rank_up(
         "{$rsn} has capped this week and qualifies for a promotion.\n\n" .
         "Current rank: {$currentRankRaw}\n" .
         "New rank: {$newRank}\n\n" .
-        "If they've already been promoted in-game, please ignore (their rank will sync on the next roster sync).";
+        "If they've already been promoted in-game, please ignore (the tracker will sync the new rank on the next roster sync).";
+
+    $channelId = (string)($clan['discord_ping_channel_id'] ?? '');
+    if ($channelId === '' || trim($botToken) === '') {
+        return;
+    }
 
     $sendRes = discord_send_message($botToken, $channelId, $message);
-
-    if (empty($sendRes['ok'])) {
-        $err = (string)($sendRes['error'] ?? 'Unknown Discord send failure');
-        $status = isset($sendRes['status']) && $sendRes['status'] !== null ? (string)$sendRes['status'] : '';
-        error_log('[rank_up_detection] Discord send failed' . ($status !== '' ? " (HTTP {$status})" : '') . ": {$err}");
-
-        // Append the error to the marker activity so it’s visible in your UI/logs.
-        try {
-            $stUpd = $pdo->prepare("
-                UPDATE member_activities
-                SET activity_details = CONCAT(activity_details, ' | Discord send failed', :extra)
-                WHERE member_id = :member_id
-                  AND activity_hash = :hash
-                LIMIT 1
-            ");
-            $extra = '';
-            if ($status !== '') $extra .= " (HTTP {$status})";
-            if ($err !== '') $extra .= ': ' . $err;
-            $stUpd->execute([
-                ':extra' => $extra,
-                ':member_id' => $memberId,
-                ':hash' => $hash,
-            ]);
-        } catch (Throwable $e) {
-            // ignore
-        }
+    if (!is_array($sendRes) || !($sendRes['ok'] ?? false)) {
+        $code = is_array($sendRes) ? (int)($sendRes['status'] ?? 0) : 0;
+        $err  = is_array($sendRes) ? (string)($sendRes['error'] ?? '') : 'unknown';
+        error_log("Rank-up Discord send failed (member_id={$memberId}, clan_id={$clanId}): HTTP {$code} {$err}");
     }
 }
+
