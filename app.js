@@ -343,8 +343,9 @@ function setPlayerAvatar(rsn) {
 function avatarSafeFilename(rsn) {
   let s = String(rsn || "").trim();
   if (!s) return "unknown";
-  s = s.replace(/[\\\/\:\*\?\"\<\>\|]+/g, "_");
-  s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/\s+/g, "_");
+  //s = s.replace(/[\\\/\:\*\?\"\<\>\|]+/g, "_");
+  //s = s.replace(/\s+/g, " ").trim();
   return s || "unknown";
 }
 
