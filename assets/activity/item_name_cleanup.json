@@ -3,6 +3,8 @@
     "pair of",
     "some"
   ],
-  "strip_suffixes": [],
+  "strip_suffixes": [
+    ", the Prayer pet"
+  ],
   "replacements": []
 }
