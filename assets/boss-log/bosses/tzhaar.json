@@ -24,11 +24,18 @@
       "order": 5
     },
     {
+      "name": "TzRek-Jad",
+      "aliases": [
+        "Tzhaar egg"
+      ],
+      "order": 6
+    },
+    {
       "name": "Shrimpy",
       "aliases": [
         "Volcanic shard"
       ],
-      "order": 6
+      "order": 7
     }
   ]
 }
